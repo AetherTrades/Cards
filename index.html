@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MTG Card Viewer</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class'
+    };
+  </script>
+
+  <!-- External CSS -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- PapaParse -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+
+<body class="dark bg-[#121212] text-gray-200 px-6 md:px-16 transition-colors duration-300">
+
+  <!-- Back to Top Button -->
+  <button id="backToTopBtn"
+          class="hidden fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full shadow-lg transition-opacity duration-300 z-50">
+    ↑ Back to Top
+  </button>
+
+  <div class="p-6 max-w-7xl mx-auto">
+    <h1 class="text-3xl font-bold text-center mb-6 text-gray-100">MTG Card Collection Viewer</h1>
+
+    <!-- Search + Sort -->
+    <div class="flex flex-col sm:flex-row justify-between items-center gap-4 mb-4">
+      <input id="search" type="text" placeholder="Search by card name or set code..."
+             class="w-full sm:w-auto flex-grow px-4 py-2 border border-gray-700 rounded shadow-sm bg-gray-800 text-white placeholder-gray-400" />
+      <select id="sortSelect"
+              class="px-2 py-2 border border-gray-700 rounded text-sm shadow-sm bg-gray-800 text-white">
+        <option value="desc">Sort by Price: High to Low</option>
+        <option value="asc">Sort by Price: Low to High</option>
+      </select>
+    </div>
+
+    <!-- Advanced Search Toggle -->
+    <button id="toggleAdvanced" aria-expanded="false" class="mb-4 flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
+      <span id="toggleIcon">▼</span>
+      <span id="toggleText">Show Advanced Search</span>
+    </button>
+
+    <!-- Advanced Search Section -->
+    <div id="advancedSearch" style="max-height: 0; overflow: hidden; visibility: hidden;"
+         class="transition-[max-height] duration-300 ease-in-out bg-[#1e1e1e] border border-gray-700 rounded p-6 shadow-md mb-6 grid gap-6">
+
+      <!-- Grid Inputs -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        <input type="text" id="typeInput"
+               class="p-2 bg-gray-800 text-white rounded border border-gray-600 placeholder-gray-400"
+               placeholder="Card type (e.g. creature, instant)" />
+
+        <select id="rarityInput"
+                class="p-2 bg-gray-800 text-white rounded border border-gray-600">
+          <option value="">All Rarities</option>
+          <option value="common">Common</option>
+          <option value="uncommon">Uncommon</option>
+          <option value="rare">Rare</option>
+          <option value="mythic">Mythic</option>
+        </select>
+
+        <input type="text" id="oracleInput"
+               class="p-2 bg-gray-800 text-white rounded border border-gray-600 placeholder-gray-400"
+               placeholder="Oracle text contains..." />
+
+        <input type="text" id="manaInput"
+               class="p-2 bg-gray-800 text-white rounded border border-gray-600 placeholder-gray-400"
+               placeholder="Mana cost (e.g. 3R, XU)" />
+      </div>
+
+      <!-- Square Tag Toggles -->
+      <div class="flex flex-col gap-2 mt-2">
+        <span class="text-sm font-semibold text-gray-300">Tags</span>
+        <div class="flex flex-wrap gap-2">
+          <label class="flex items-center gap-2 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition">
+            <input id="foilToggle" type="checkbox" class="form-checkbox w-4 h-4 text-blue-500 accent-blue-500">
+            <span class="text-sm">Foil</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition">
+            <input id="etchedToggle" type="checkbox" class="form-checkbox w-4 h-4 text-purple-500 accent-purple-500">
+            <span class="text-sm">Etched</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition">
+            <input id="promoToggle" type="checkbox" class="form-checkbox w-4 h-4 text-pink-500 accent-pink-500">
+            <span class="text-sm">Promo</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition">
+            <input id="tokenToggle" type="checkbox" class="form-checkbox w-4 h-4 text-yellow-400 accent-yellow-400">
+            <span class="text-sm">Token</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Reset Button -->
+      <div class="flex justify-end mt-4">
+        <button id="resetFilters" class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-500">
+          Reset Filters
+        </button>
+      </div>
+    </div>
+
+    <!-- Card Count -->
+    <p id="cardCount" class="text-sm text-gray-400 mb-2">Showing 0 cards</p>
+
+    <!-- Card Grid + Sentinel -->
+    <div class="overflow-x-hidden">
+      <div id="cardContainer" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 px-2 justify-items-center"></div>
+      <div id="loadingSentinel" class="h-12 text-center text-sm text-gray-500 pt-4">
+        <span id="loadingStatus">Loading more cards...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- JS Entry Point -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

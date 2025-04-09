@@ -1,0 +1,72 @@
+/* styles.css */
+
+/* Optional base styling for card price fade-in */
+.price-fade {
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  .price-fade.show {
+    opacity: 1;
+    transform: translateY(0px);
+  }
+  
+  /* Glow animation for rarity tags */
+  .glow-animate {
+    animation: glowPulse 2.4s ease-in-out infinite alternate;
+  }
+  @keyframes glowPulse {
+    0% {
+      box-shadow: 0 0 5px rgba(255,255,255,0.1);
+    }
+    100% {
+      box-shadow: 0 0 12px rgba(255,255,255,0.9);
+    }
+  }
+  
+  /* Rounded image for cleaner display */
+  .rounded-img {
+    border-radius: 1rem;
+  }
+  
+  /* Optional card wrapper styling for future foil animation support */
+  .card-wrapper.foil img {
+    box-shadow: 0 0 10px #38bdf8;
+  }
+  .foil-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .foil-shimmer::after {
+    content: "";
+    position: absolute;
+    top: -100%;
+    left: -100%;
+    width: 300%;
+    height: 300%;
+    background: linear-gradient(
+      135deg,
+      rgba(255, 0, 255, 0.1),
+      rgba(0, 255, 255, 0.15),
+      rgba(255, 255, 0, 0.2),
+      rgba(255, 0, 255, 0.1)
+    );
+    animation: rainbowShimmer 5s linear infinite;
+    pointer-events: none;
+    z-index: 1;
+    mix-blend-mode: screen;
+    border-radius: 0.5rem;
+  }
+  
+  @keyframes rainbowShimmer {
+    0% {
+      transform: translateX(-100%) translateY(-100%) rotate(0deg);
+    }
+    100% {
+      transform: translateX(100%) translateY(100%) rotate(360deg);
+    }
+  }
+  
+  
+  
