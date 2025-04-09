@@ -25,7 +25,7 @@ export async function fetchAndParseJSON() {
   try {
     db = await openDB();
 
-    const res = await fetch("/data/cards.json");
+    const res = await fetch("./data/cards.json");
     const json = await res.json();
 
     if (!Array.isArray(json) || json.length === 0) {
