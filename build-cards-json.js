@@ -1,25 +1,30 @@
 // Cards/build-cards-json.js
-// Refactored using ES Modules and modern Node.js features
-// Now includes output for unmatched CSV entries
-// Handles regular cards and tokens found in the default Scryfall bulk data.
+// Processes cards.csv and Scryfall bulk data ('default-cards')
+// to create data/cards.json for the frontend application.
 
 // Dependencies: npm install papaparse
 import { promises as fs, createWriteStream as createWriteStreamSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import Papa from 'papaparse';
+import os from 'node:os'; // <-- Import os module
 
 // --- Configuration ---
-const CSV_FILE = "cards.csv";
-const OUTPUT_FILE = "data/cards.json";
-const UNMATCHED_CSV_OUTPUT_FILE = "data/unmatched_cards.json"; // Output for unmatched cards
-const CACHE_DIR = ".cache";
-const BULK_FILE_NAME = "default-cards.json"; // Includes cards and tokens
-const BULK_FILE_PATH = path.join(CACHE_DIR, BULK_FILE_NAME);
-const SCRYFALL_BULK_API = "https://api.scryfall.com/bulk-data/default-cards";
-// Consider making this configurable via environment variable or command-line arg
-const MY_PRICE_MULTIPLIER = 0.85;
-const VERBOSE_LOGGING = false; // Set true for detailed matching logs
+const CSV_FILE = "cards.csv"; // Input CSV file path (in the same directory as script)
+const OUTPUT_FILE = "data/cards.json"; // Main output JSON file path
+const UNMATCHED_CSV_OUTPUT_FILE = "data/unmatched_cards.json"; // Output for unmatched CSV rows
+
+// --- Cache Location ---
+const desktopDir = path.join(os.homedir(), 'Desktop'); // Get user's Desktop path
+const CACHE_DIR = desktopDir; // Use Desktop directory for cache
+console.log(`ℹ️ Using cache directory: ${CACHE_DIR}`); // Log the cache path being used
+// --------------------
+
+const BULK_FILE_NAME = "default-cards.json"; // Scryfall bulk file type (includes tokens)
+const BULK_FILE_PATH = path.join(CACHE_DIR, BULK_FILE_NAME); // Full path to cached bulk file on Desktop
+const SCRYFALL_BULK_API = "https://api.scryfall.com/bulk-data/default-cards"; // API endpoint for bulk data info
+const MY_PRICE_MULTIPLIER = 0.85; // Multiplier for calculating 'myPrice' if not in CSV
+const VERBOSE_LOGGING = false; // Set true for detailed matching logs per card
 // --------------------
 
 /**
@@ -38,83 +43,88 @@ async function ensureDir(dirPath) {
 }
 
 /**
- * Fetches and caches Scryfall bulk data using streaming.
- * The "default-cards" bulk data includes regular cards and tokens.
- * @returns {Promise<Array<Object>>} - A promise that resolves with the parsed bulk data.
+ * Downloads Scryfall bulk data if cache is missing or invalid.
+ * Uses streaming for efficient download and caching.
+ * @returns {Promise<string>} - A promise that resolves with the file path of the cached bulk data.
  */
-async function getBulkData() {
-    await ensureDir(CACHE_DIR);
+async function downloadBulkDataIfNeeded() {
+    // Note: We don't need to ensureDir for Desktop as it should already exist.
+    // If you wanted a subfolder on the Desktop, you would use ensureDir here.
+    // await ensureDir(CACHE_DIR);
 
-    if (existsSync(BULK_FILE_PATH)) {
+    // Basic check: download if file doesn't exist on Desktop
+    if (!existsSync(BULK_FILE_PATH)) {
+        console.log(`🌐 Cache miss on Desktop. Downloading Scryfall bulk data ('${BULK_FILE_NAME}')...`);
         try {
-            console.log(`✅ Using cached Scryfall bulk data from: ${BULK_FILE_PATH}`);
-            const raw = await fs.readFile(BULK_FILE_PATH, "utf8");
-            return JSON.parse(raw);
-        } catch (readError) {
-            console.warn(`⚠️ Error reading cache file (${readError.message}). Attempting download...`);
-            // Proceed to download if reading cache fails
+            // 1. Fetch metadata to get the download URI
+            const metaRes = await fetch(SCRYFALL_BULK_API);
+            if (!metaRes.ok) {
+                throw new Error(`Failed to fetch bulk data metadata (${metaRes.status} ${metaRes.statusText}) from ${SCRYFALL_BULK_API}`);
+            }
+            const meta = await metaRes.json();
+            const downloadUri = meta?.download_uri;
+            if (!downloadUri) {
+                throw new Error("Download URI not found in Scryfall bulk data metadata.");
+            }
+            console.log(`  Downloading from: ${downloadUri}`);
+
+            // 2. Fetch the actual bulk data file using streaming
+            const bulkRes = await fetch(downloadUri);
+            if (!bulkRes.ok || !bulkRes.body) {
+                throw new Error(`Failed to download bulk data file (${bulkRes.status} ${bulkRes.statusText})`);
+            }
+
+            // 3. Stream the download directly to the cache file on Desktop
+            console.log(`  Saving to: ${BULK_FILE_PATH}`);
+            const fileStream = createWriteStreamSync(BULK_FILE_PATH);
+            await pipeline(bulkRes.body, fileStream); // Efficiently pipes the download stream to the file stream
+
+            console.log(`✅ Bulk data downloaded and cached to Desktop: ${BULK_FILE_PATH}`);
+
+        } catch (downloadError) {
+            console.error(`❌ Failed to download or cache bulk data to Desktop: ${downloadError.message}`);
+            // Attempt to clean up potentially incomplete cache file
+            try {
+                if (existsSync(BULK_FILE_PATH)) {
+                    await fs.unlink(BULK_FILE_PATH);
+                    console.log(`🧹 Cleaned up potentially incomplete cache file on Desktop: ${BULK_FILE_PATH}`);
+                }
+            } catch (cleanupError) {
+                console.error(`⚠️ Failed to clean up cache file on Desktop: ${cleanupError.message}`);
+            }
+            throw downloadError; // Re-throw error to stop the script
         }
     } else {
-        console.log(`🌐 Cache not found at ${BULK_FILE_PATH}. Downloading Scryfall bulk data ('default-cards')...`);
+         console.log(`✅ Using cached Scryfall bulk data from Desktop: ${BULK_FILE_PATH}`);
     }
+     return BULK_FILE_PATH;
+}
 
-    // Download logic
+/**
+ * Loads and parses the Scryfall bulk data from the cached file.
+ * @param {string} bulkFilePath - Path to the cached bulk data JSON file (now on Desktop).
+ * @returns {Promise<Array<Object>>} - A promise that resolves with the parsed bulk data array.
+ */
+async function loadBulkData(bulkFilePath) {
+    console.log(`💾 Loading Scryfall bulk data from cache: ${bulkFilePath}`);
     try {
-        const metaRes = await fetch(SCRYFALL_BULK_API);
-        if (!metaRes.ok) {
-            throw new Error(`Failed to fetch bulk data metadata (${metaRes.status} ${metaRes.statusText}) from ${SCRYFALL_BULK_API}`);
+        const raw = await fs.readFile(bulkFilePath, "utf8");
+        console.log(`  Parsing ${raw.length} bytes of JSON data... (This might take a moment)`);
+        const parsedData = JSON.parse(raw);
+        console.log(`  Successfully parsed bulk data.`);
+        return parsedData;
+    } catch (error) {
+        console.error(`❌ Failed to read or parse bulk data cache ${bulkFilePath}: ${error.message}`);
+        // Add a check for common Desktop access issues if needed (though less likely)
+        if (error.code === 'ENOENT') {
+             console.error(`\n>>> Cache file not found at expected Desktop location. Has it been downloaded previously? <<<\n`);
+        } else if (error.code === 'EACCES') {
+             console.error(`\n>>> Permission denied reading cache file from Desktop. Check file/folder permissions. <<<\n`);
         }
-        const meta = await metaRes.json();
-        const downloadUri = meta?.download_uri;
-        if (!downloadUri) {
-            throw new Error("Download URI not found in Scryfall bulk data metadata.");
-        }
-        console.log(` Downloading from: ${downloadUri}`);
-
-        const bulkRes = await fetch(downloadUri);
-        if (!bulkRes.ok || !bulkRes.body) {
-            throw new Error(`Failed to download bulk data file (${bulkRes.status} ${bulkRes.statusText})`);
-        }
-
-        // Stream download to file
-        const bulkDataRaw = await bulkRes.json();
-
-        // Load CSV identifiers to a Set
-        const cardsFromCSV = await loadCSV(CSV_FILE);
-        const identifiers = new Set(cardsFromCSV.map(csvCard => {
-            const setCode = csvCard["Set code"];
-            const collectorNumberRaw = csvCard["Collector number"];
-            const collectorNumberClean = String(collectorNumberRaw).toLowerCase().replace(/[^0-9a-z★]/g, '');
-            return `${setCode}:${collectorNumberClean}`.toLowerCase();
-        }));
-
-        // Filter bulk data
-        const filteredBulkData = bulkDataRaw.filter(card => {
-            if (!card.set || !card.collector_number) return false;
-            const cleanCollectorNumber = String(card.collector_number).toLowerCase().replace(/[^0-9a-z★]/g, '');
-            const key = `${card.set}:${cleanCollectorNumber}`.toLowerCase();
-            return identifiers.has(key);
-        });
-
-        await fs.writeFile(BULK_FILE_PATH, JSON.stringify(filteredBulkData, null, 2));
-        console.log(`✅ Bulk data downloaded and cached to: ${BULK_FILE_PATH}`);
-
-        return filteredBulkData;
-
-    } catch (downloadError) {
-        console.error(`❌ Failed to download or process bulk data: ${downloadError.message}`);
-        // Attempt to clean up potentially incomplete cache file
-        try {
-            if (existsSync(BULK_FILE_PATH)) {
-                await fs.unlink(BULK_FILE_PATH);
-                console.log(`🧹 Cleaned up incomplete cache file: ${BULK_FILE_PATH}`);
-            }
-        } catch (cleanupError) {
-            console.error(`⚠️ Failed to clean up cache file: ${cleanupError.message}`);
-        }
-        throw downloadError; // Re-throw error to stop the script
+        throw error;
     }
 }
+
 
 /**
  * Parses the CSV file asynchronously.
@@ -126,97 +136,105 @@ async function loadCSV(filePath) {
     try {
         const csvContent = await fs.readFile(filePath, "utf8");
         const result = Papa.parse(csvContent, {
-            header: true,
-            skipEmptyLines: true,
-            dynamicTyping: true, // Automatically infer types
+            header: true, // Use first row as headers
+            skipEmptyLines: true, // Ignore empty lines
+            dynamicTyping: true, // Automatically convert numbers, booleans
+            transformHeader: header => header.trim() // Trim whitespace from headers
         });
 
+        // Log parsing errors
         if (result.errors.length > 0) {
             console.warn("⚠️ Errors encountered during CSV parsing:");
             result.errors.slice(0, 5).forEach(err => console.warn(` - Row ${err.row}: ${err.message} (${err.code})`));
             if (result.errors.length > 5) console.warn(` ... (${result.errors.length - 5} more errors)`);
         }
 
-        // Filter out rows missing essential keys for matching AT THIS STAGE
-        // These keys are needed for both cards and tokens for matching
-        const validData = result.data.filter(c => c?.Name && c?.["Set code"] && c?.["Collector number"]);
+        const requiredKeys = ["Name", "Set code", "Collector number", "Quantity"];
+        const validData = result.data.filter(row => {
+            const hasRequired = requiredKeys.every(key => row?.[key] != null && String(row?.[key]).trim() !== '');
+            const hasValidQuantity = typeof row?.Quantity === 'number' && row.Quantity > 0;
+            if (!hasRequired) {
+                if (VERBOSE_LOGGING) console.log(`Skipping row: Missing required key(s) - ${JSON.stringify(row)}`);
+                return false;
+            }
+            if (!hasValidQuantity) {
+                 if (VERBOSE_LOGGING) console.log(`Skipping row: Invalid or zero Quantity - ${JSON.stringify(row)}`);
+                 return false;
+            }
+            return true;
+        });
         const skippedCount = result.data.length - validData.length;
+
         if (skippedCount > 0) {
-            console.log(` Skipped ${skippedCount} rows from CSV due to missing Name, Set code, or Collector number.`);
+            console.log(`  Skipped ${skippedCount} rows from CSV due to missing required data or invalid quantity.`);
         }
-        console.log(` Found ${validData.length} potentially valid card/token entries in CSV.`);
+        console.log(`  Found ${validData.length} valid card entries in CSV.`);
         return validData;
 
     } catch (error) {
         console.error(`❌ Failed to read or parse CSV file ${filePath}: ${error.message}`);
+        if (error.code === 'ENOENT') {
+             console.error(`\n>>> Please ensure '${path.basename(filePath)}' exists in the script directory (${path.dirname(filePath)}) <<<\n`); // Adjusted path reporting
+        }
         throw error;
     }
 }
 
 /**
- * Selects the best image URL from Scryfall data.
+ * Selects the best image URL from Scryfall data (border_crop > normal > large).
+ * Handles single-faced and multi-faced cards.
  * @param {Object} imageUris - The image_uris object from Scryfall.
  * @param {Array<Object>} cardFaces - The card_faces array from Scryfall (for multi-faced cards).
- * @returns {string} - The selected image URL or an empty string.
- */
-/**
- * Selects the best image URL from Scryfall data.
- * @param {Object} imageUris - The image_uris object from Scryfall.
- * @param {Array<Object>} cardFaces - The card_faces array from Scryfall (for multi-faced cards).
- * @returns {string} - The selected image URL or an empty string.
+ * @returns {string | null} - The selected image URL or null if none found.
  */
 function getImageUrl(imageUris, cardFaces) {
-    // Prioritize the border-cropped version first if available
+    // Prioritize border_crop if available
     if (imageUris?.border_crop) return imageUris.border_crop;
-    
-    // Fallback: Use the normal or large image from the primary imageUris object
+
+    // Fallback to normal or large from primary imageUris
     if (imageUris?.normal) return imageUris.normal;
     if (imageUris?.large) return imageUris.large;
-    
-    // For multi-faced cards, check the first face for a border-cropped version first
+
+    // For multi-faced cards, check the first face
     if (cardFaces?.[0]?.image_uris?.border_crop) return cardFaces[0].image_uris.border_crop;
     if (cardFaces?.[0]?.image_uris?.normal) return cardFaces[0].image_uris.normal;
     if (cardFaces?.[0]?.image_uris?.large) return cardFaces[0].image_uris.large;
-    
+
     // Default fallback if no usable image is found
-    return "";
-  }
-  
+    return null; // Return null explicitly if no image found
+}
 
 /**
- * Determines the market price based on finish and availability.
- * Tokens generally don't have market prices in Scryfall's price data.
- * @param {Object} prices - The prices object from Scryfall data.
+ * Determines the market price based on finish and availability from Scryfall prices.
+ * @param {Object} prices - The prices object from Scryfall data (e.g., { usd: '1.23', usd_foil: '4.56' }).
  * @param {string} csvFinish - The finish specified in the CSV ('foil', 'etched', 'normal', etc.).
  * @param {boolean} isPromo - Whether the card is considered a promo.
  * @returns {number} - The determined market price, defaulting to 0.
  */
 function getMarketPrice(prices = {}, csvFinish = 'normal', isPromo = false) {
-    // Tokens typically lack price data, so prices will likely be null.
     if (!prices || Object.keys(prices).length === 0) {
-        return 0;
+        return 0; // No price data available (common for tokens)
     }
 
     let price = null;
-    const finishLower = csvFinish.toLowerCase(); // Ensure consistent casing
+    const finishLower = String(csvFinish || 'normal').toLowerCase(); // Ensure string and lowercase
 
-    // Prioritize based on CSV finish
+    // Try to find price based on CSV finish preference
     if (finishLower === "etched" && prices.usd_etched != null) price = prices.usd_etched;
     else if (finishLower === "foil" && prices.usd_foil != null) price = prices.usd_foil;
     else if (prices.usd != null) price = prices.usd; // Default to non-foil if available
 
-    // Fallback if preferred finish price is missing
+    // Fallback if preferred finish price was missing
     if (price == null) {
         if (prices.usd != null) price = prices.usd;
         else if (prices.usd_foil != null) price = prices.usd_foil;
         else if (prices.usd_etched != null) price = prices.usd_etched;
     }
 
-    // Promo heuristic: If it's a promo and we have a foil price, prefer foil price if current price is non-foil or null.
-    // This might apply to promo tokens if they somehow get foil price data, but less likely.
-    if (isPromo && prices.usd_foil != null && (price == null || price === prices.usd)) {
+    // Promo heuristic: If it's a promo and we ended up with non-foil price,
+    // but a foil price exists, prefer the foil price.
+    if (isPromo && prices.usd_foil != null && price === prices.usd) {
         price = prices.usd_foil;
-        if (VERBOSE_LOGGING) console.log(` Promo heuristic applied: using foil price ${price}`);
     }
 
     // Final conversion to number
@@ -231,15 +249,15 @@ async function buildCardData() {
     try {
         console.time("Total Build Time");
 
-        // 1. Load CSV and Bulk Data concurrently
+        // 1. Load CSV and Ensure/Load Bulk Data
         console.time("Data Loading");
-           const cardsFromCSV = await loadCSV(CSV_FILE);
-
-        const bulkData = await getBulkData(); // Fetches "default-cards" which includes tokens
+        const cardsFromCSV = await loadCSV(CSV_FILE);
+        const bulkFilePath = await downloadBulkDataIfNeeded(); // Ensure bulk data is downloaded/cached on Desktop
+        const bulkData = await loadBulkData(bulkFilePath); // Load the full bulk data from Desktop
         console.timeEnd("Data Loading");
 
         if (!cardsFromCSV || cardsFromCSV.length === 0) {
-            console.log("🚫 No valid card/token entries found in CSV. Exiting.");
+            console.log("🚫 No valid card entries found in CSV. Exiting.");
             return;
         }
         if (!bulkData || bulkData.length === 0) {
@@ -251,34 +269,26 @@ async function buildCardData() {
         console.time("Index Building");
         const scryfallIndex = new Map();
         for (const card of bulkData) {
-            // *** MODIFIED: Removed filter that excluded tokens ***
-            // Now includes cards with layout 'token', 'emblem', etc. if they have set/collector_number
-            // We rely on the CSV having entries for the tokens we want to match.
-            // Basic filter for entries that are unlikely to match CSV structure (e.g., art cards without numbers)
-             if (!card.set || !card.collector_number) {
-                 // Optional: Log if skipping bulk entries lacking set/collector_number
-                 // if (VERBOSE_LOGGING) console.log(` Skipping bulk entry (no set/collector_number): ${card.name} (${card.id})`);
-                 continue;
-             }
-
-            // Handle variations in collector numbers (e.g., "100a" vs "100", "T1", "5★")
-            // Keep only the alphanumeric part and potential star for matching
+            if (!card.set || !card.collector_number) {
+                continue;
+            }
             const cleanCollectorNumber = String(card.collector_number).toLowerCase().replace(/[^0-9a-z★]/g, '');
             const key = `${card.set}:${cleanCollectorNumber}`.toLowerCase();
-            // Overwrite duplicates, assuming the last entry in bulk is sufficient (unlikely to matter much for tokens)
             scryfallIndex.set(key, card);
 
-            // Add entry for full art ★ suffix if present and differs from cleaned version
-            if (card.collector_number.includes("★") && !cleanCollectorNumber.endsWith("★")) {
-                const keyWithStar = `${card.set}:${card.collector_number.toLowerCase()}`; // Keep star in this key
-                scryfallIndex.set(keyWithStar, card);
+            const rawCollectorNumberStr = String(card.collector_number).toLowerCase();
+            if (rawCollectorNumberStr.includes("★") && rawCollectorNumberStr !== cleanCollectorNumber) {
+                const keyWithStar = `${card.set}:${rawCollectorNumberStr}`;
+                if (!scryfallIndex.has(keyWithStar)) {
+                    scryfallIndex.set(keyWithStar, card);
+                }
             }
         }
         console.timeEnd("Index Building");
-        console.log(` Index built with ${scryfallIndex.size} unique entries (including cards and tokens).`);
+        console.log(`  Index built with ${scryfallIndex.size} unique Scryfall entries.`);
 
         // 3. Enrich CSV data with Scryfall data
-        console.log(`✨ Enriching ${cardsFromCSV.length} cards/tokens from CSV...`);
+        console.log(`✨ Enriching ${cardsFromCSV.length} cards from CSV...`);
         console.time("Card Enrichment");
         const enrichedCards = [];
         const unmatchedCsvEntries = [];
@@ -286,95 +296,105 @@ async function buildCardData() {
         let noMatchCount = 0;
 
         for (const csvCard of cardsFromCSV) {
+            const name = csvCard["Name"];
             const setCode = csvCard["Set code"];
             const collectorNumberRaw = csvCard["Collector number"];
+            const quantity = csvCard["Quantity"];
 
-            // Basic check (already done in loadCSV, but good safety)
-            if (!setCode || !collectorNumberRaw) {
-                 if (VERBOSE_LOGGING) console.warn(` Skipping CSV row (missing Set code or Collector number): ${csvCard.Name || 'Unknown Name'} (Raw CN: ${collectorNumberRaw})`);
-                 unmatchedCsvEntries.push({
-                     reason: "Missing Set code or Collector number in CSV",
-                     csvData: csvCard
-                 });
+            if (!name || !setCode || !collectorNumberRaw) {
+                 console.warn(`Internal Skip: Row missing critical field after loadCSV filter - ${JSON.stringify(csvCard)}`);
                  continue;
             }
 
-            // Clean CSV collector number similarly to the index key
             const collectorNumberClean = String(collectorNumberRaw).toLowerCase().replace(/[^0-9a-z★]/g, '');
-
             const key = `${setCode}:${collectorNumberClean}`.toLowerCase();
             let match = scryfallIndex.get(key);
 
-            // Attempt match with raw collector number if clean fails and raw contains star
-            // (Handles cases where CSV has "5★" and index has "set:5★")
-            if (!match && String(collectorNumberRaw).includes("★")) {
-                const rawKey = `${setCode}:${String(collectorNumberRaw).toLowerCase()}`;
+            const rawCollectorNumberStr = String(collectorNumberRaw).toLowerCase();
+            if (!match && rawCollectorNumberStr.includes("★")) {
+                const rawKey = `${setCode}:${rawCollectorNumberStr}`;
                 match = scryfallIndex.get(rawKey);
-                 if (match && VERBOSE_LOGGING) console.log(` Match found using raw collector number key: ${rawKey}`);
             }
 
             if (!match) {
-                if (VERBOSE_LOGGING) console.warn(`❓ No Scryfall match for key: ${key} (CSV Card: ${csvCard.Name}, Set: ${setCode}, CN: ${collectorNumberRaw})`);
+                if (VERBOSE_LOGGING) console.warn(`❓ No Scryfall match for key: ${key} (CSV Card: ${name}, Set: ${setCode}, CN: ${collectorNumberRaw})`);
                 noMatchCount++;
                 unmatchedCsvEntries.push({
-                    reason: `No Scryfall match found for key: ${key} (using clean CN)`,
+                    reason: `No Scryfall match found for key: ${key}`,
                     csvData: csvCard
                 });
-                continue; // Skip to next card/token
+                continue;
             }
 
-            // --- Match Found ---
             matchCount++;
-            // Determine finish/promo status from CSV and Scryfall data
-            const csvFinish = (csvCard.Foil || "normal").toLowerCase();
-            // Consider 'Promo?' column if it exists, otherwise rely on Scryfall `promo` field.
+
+            const csvFinishRaw = csvCard.Foil || csvCard.Finish || 'normal';
+            const csvFinish = String(csvFinishRaw).toLowerCase();
+            const isFoil = csvFinish === 'foil';
+            const isEtched = csvFinish === 'etched';
             const isPromo = (csvCard["Promo?"] === true || csvCard.Promos === true || match.promo === true);
-            // Tokens generally don't have prices, getMarketPrice will return 0.
+
             const marketPrice = getMarketPrice(match.prices, csvFinish, isPromo);
             const imgUrl = getImageUrl(match.image_uris, match.card_faces);
+            const myPrice = parseFloat(csvCard.myPrice ?? (marketPrice * MY_PRICE_MULTIPLIER).toFixed(2)) || 0;
+            const cmc = typeof match.cmc === 'number' ? match.cmc : 0;
+
+            const searchableText = [
+                name,
+                match.set_name,
+                setCode,
+                match.type_line,
+                match.oracle_text,
+                match.rarity,
+                csvFinish
+            ].filter(Boolean).join(" ").toLowerCase().replace(/\s+/g, ' ');
+
+            const uniqueId = `${match.id}${isFoil ? '_foil' : ''}${isEtched ? '_etched' : ''}`;
 
             enrichedCards.push({
-                ...csvCard, // Keep original CSV data
-                scryfall: { // Nest relevant Scryfall data
+                id: uniqueId,
+                name: name,
+                set: setCode,
+                collectorNumber: collectorNumberRaw,
+                quantity: quantity,
+                isFoil: isFoil,
+                isEtched: isEtched,
+                isPromo: isPromo,
+                marketPrice: marketPrice,
+                myPrice: myPrice,
+                cmc: cmc,
+                searchableText: searchableText,
+                imageUrl: imgUrl,
+                setName: match.set_name,
+                rarity: match.rarity,
+                typeLine: match.type_line || "",
+                oracleText: match.oracle_text || "",
+                manaCost: match.mana_cost || "",
+                colors: match.colors || [],
+                colorIdentity: match.color_identity || [],
+                keywords: match.keywords || [],
+                layout: match.layout,
+                scryfall: {
                     id: match.id,
-                    // Tokens might lack oracle_id, mana_cost, cmc, colors, legalities
-                    oracle_id: match.oracle_id || null, // Use null if missing
-                    name: match.name,
-                    set: match.set,
-                    set_name: match.set_name,
-                    collector_number: match.collector_number,
-                    rarity: match.rarity, // Often 'token' for tokens
-                    layout: match.layout, // Will be 'token' for tokens
-                    type_line: match.type_line || "", // Tokens have type lines
-                    oracle_text: match.oracle_text || "", // Tokens might have reminder text
-                    mana_cost: match.mana_cost || "", // Empty for tokens
-                    cmc: match.cmc || 0, // 0 for tokens
-                    colors: match.colors || [], // Empty for tokens unless specified (uncommon)
-                    color_identity: match.color_identity || [], // May exist based on abilities/frame
-                    legalities: match.legalities || {}, // Empty for tokens
-                    promo: match.promo || false,
+                    oracle_id: match.oracle_id || null,
+                    legalities: match.legalities || {},
                     reprint: match.reprint || false,
                     variation: match.variation || false,
-                    imgUrl: imgUrl,
-                    prices: match.prices || {}, // Will be empty/null for tokens
+                    prices: match.prices || {},
                 },
-                // Market price will be 0 for most tokens
-                marketPrice: marketPrice,
-                myPrice: (marketPrice * MY_PRICE_MULTIPLIER).toFixed(2), // Will be "0.00" for tokens
-                searchableText: [csvCard.Name, match.set_name, card["Set code"],match.type_line, match.oracle_text,match.rarity].filter(Boolean).join(" ").toLowerCase()
             });
-        }
+        } // End CSV loop
         console.timeEnd("Card Enrichment");
 
         // 4. Write Output Files
-        await ensureDir(path.dirname(OUTPUT_FILE)); // Ensure output directory exists
+        await ensureDir(path.dirname(OUTPUT_FILE)); // Ensure output directory exists in project
 
-        console.log(`\n💾 Writing ${enrichedCards.length} enriched cards/tokens to ${OUTPUT_FILE}...`);
+        console.log(`\n💾 Writing ${enrichedCards.length} enriched cards to ${OUTPUT_FILE}...`);
         await fs.writeFile(OUTPUT_FILE, JSON.stringify(enrichedCards, null, 2));
 
         // Write unmatched entries if any exist
         if (unmatchedCsvEntries.length > 0) {
-            await ensureDir(path.dirname(UNMATCHED_CSV_OUTPUT_FILE)); // Ensure output directory exists
+            await ensureDir(path.dirname(UNMATCHED_CSV_OUTPUT_FILE)); // Ensure data dir exists
             console.log(`💾 Writing ${unmatchedCsvEntries.length} unmatched CSV entries to ${UNMATCHED_CSV_OUTPUT_FILE}...`);
             try {
                 await fs.writeFile(UNMATCHED_CSV_OUTPUT_FILE, JSON.stringify(unmatchedCsvEntries, null, 2));
@@ -394,13 +414,14 @@ async function buildCardData() {
             }
         }
 
+        // --- Summary ---
         console.log(`\n--- Build Summary ---`);
-        console.log(` Total cards/tokens processed from CSV: ${cardsFromCSV.length}`);
+        console.log(` Total valid entries processed from CSV: ${cardsFromCSV.length}`);
         console.log(` ✅ Matched with Scryfall data: ${matchCount}`);
-        console.log(` ❓ No Scryfall match found:    ${noMatchCount}`);
+        console.log(` ❓ No Scryfall match found:       ${noMatchCount}`);
         console.log(`---------------------`);
         console.timeEnd("Total Build Time");
-        console.log(`\n✅ Done!`);
+        console.log(`\n✅ Done! Output file generated at: ${OUTPUT_FILE}`);
 
     } catch (error) {
         console.error("\n❌ An error occurred during the build process:", error);

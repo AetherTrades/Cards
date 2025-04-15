@@ -1,139 +1,122 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- Metadata and basic page configuration -->
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Collection</title>
-  
-  <!-- Tailwind CSS via CDN (for utility-first styling) -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    // Tailwind configuration enabling dark mode (switchable via a class)
-    tailwind.config = {
-      darkMode: 'class'
-    };
-  </script>
-  
-  <!-- Link to the external stylesheet for custom styles -->
-  <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>MTG Card Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = { darkMode: 'class' };
+      document.documentElement.classList.add('dark');
+    </script>
+    <link rel="icon" type="image/png" href="assets/favicon.png" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; overscroll-behavior-x: none; padding-bottom: 80px; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #2d2d2d; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #555; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #777; }
+        html, body { height: 100%; margin: 0; overflow-x: hidden; }
+        #loadingIndicator { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; }
+        #errorMessage { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); z-index: 1001; transition: opacity 0.5s ease-in-out; }
+        .menu-input { background-color: #374151; border: 1px solid #4b5563; color: #f3f4f6; border-radius: 0.375rem; padding: 0.5rem 0.75rem; font-size: 0.875rem; width: 100%; outline: none; }
+        .menu-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5); }
+        select.menu-input { padding-right: 2.5rem; }
+        .menu-checkbox-label { display: inline-flex; align-items: center; padding: 0.3rem 0.6rem; border: 1px solid #4b5563; border-radius: 0.375rem; background-color: #374151; cursor: pointer; transition: background-color 0.2s, border-color 0.2s; }
+        .menu-checkbox-label:hover { background-color: #4b5563; }
+        .menu-checkbox { margin-right: 0.4rem; height: 0.8rem; width: 0.8rem; border-radius: 0.15rem; }
+        .menu-action-button { width: 100%; padding: 0.6rem 1rem; border-radius: 0.375rem; color: white; font-weight: 500; font-size: 0.875rem; text-align: center; transition: background-color 0.2s; border: none; cursor: pointer; }
+        .menu-action-button-sm { padding: 0.25rem 0.75rem; font-size: 0.75rem; width: auto; display: inline-block; margin-top: 0.25rem; margin-bottom: 0.75rem; border-radius: 0.375rem; color: white; font-weight: 500; text-align: center; transition: background-color 0.2s; border: none; cursor: pointer; }
+        /* Container for new swipe animations */
+        #swipe-animation-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 100; overflow: hidden; }
+    </style>
 </head>
-<body class="dark bg-[#121212] text-gray-200 px-4 md:px-10 transition-colors duration-300 font-sans">
+<body class="dark bg-[#121212] text-gray-200 transition-colors duration-300 font-sans overflow-x-hidden">
 
-  <!-- Back-to-Top Button (hidden by default, appears on scroll) -->
-  <button id="backToTopBtn" class="hidden fixed bottom-5 right-5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-full shadow-lg transition-opacity duration-300 z-50 text-xs">
-    ↑ Top
-  </button>
-
-  <!-- Main page container centered with padding and maximum width -->
-  <div class="p-4 max-w-7xl mx-auto">
-  
-    <!-- Page Title/Header -->
-    <h1 class="text-2xl md:text-3xl font-bold text-center mb-5 text-gray-100">
-      Aether Traders Card Collection
-    </h1>
-
-    <!-- Search Input Section -->
-    <div class="flex justify-center mb-4">
-      <input id="search" type="text" placeholder="Search cards by name, set, text..." 
-             class="w-full max-w-xl px-4 py-2 border border-gray-700 rounded shadow-sm bg-gray-800 text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none" />
+    <div id="mainContent" class="p-4 max-w-7xl mx-auto relative transition-transform duration-300 ease-in-out">
+        <h1 class="text-2xl md:text-3xl font-bold text-center mb-5 text-gray-100">MTG Card Viewer</h1>
+        <p id="cardCount" class="text-sm text-gray-400 mb-1 text-center">Showing 0 cards</p>
+        <div class="overflow-x-hidden">
+            <div id="cardContainer" class="mt-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-4 md:gap-6 px-1 justify-items-center"></div>
+            <div id="loadingSentinel" class="h-12 text-center text-sm text-gray-500 pt-4"><span id="loadingStatus">Loading more cards...</span></div>
+        </div>
     </div>
 
-    <!-- Advanced Search Toggle Button -->
-    <div class="flex justify-center mb-4">
-      <button id="toggleAdvanced" aria-expanded="false" aria-controls="advancedSearch" 
-              class="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white rounded hover:bg-blue-600 transition text-sm shadow">
-        <span id="toggleIcon">▼</span>
-        <span id="toggleText">Show Advanced Search & Options</span>
-      </button>
+
+      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+      </svg>
+    </button>
+    <button id="menuToggleBtn" aria-label="Toggle Menu" class="fixed bottom-20 left-4 pointer-events-auto bg-gray-700 hover:bg-gray-600 text-white p-3 rounded-full shadow-lg transition-all duration-300 ease-in-out z-[51] transform hover:scale-110">
+        <svg id="menuIconHamburger" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transition-opacity duration-200 opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16m-7 6h7" /></svg>
+        <svg id="menuIconClose" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute inset-0 m-auto opacity-0 transition-opacity duration-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+    </button>
+
+    <div id="menuPanel" class="fixed inset-y-0 left-0 w-72 bg-[#1e1e1e] border-r border-gray-700 shadow-xl z-50 transform -translate-x-full transition-transform duration-300 ease-in-out overflow-y-auto flex flex-col">
+        <div class="p-4 border-b border-gray-600 flex justify-between items-center sticky top-0 bg-[#1e1e1e]/80 backdrop-blur-sm z-10">
+            <h2 class="text-lg font-semibold text-gray-100">Menu & Filters</h2>
+        </div>
+        <div class="p-4 border-b border-gray-600">
+            <h3 class="text-md font-semibold mb-2 text-gray-200">Favorites (<span id="menuFavCount">0</span>)</h3>
+            <div class="text-sm text-green-400 font-medium mb-2">Total Value: $<span id="menuFavTotal">0.00</span></div>
+            <div class="flex gap-2 mb-3">
+                <button id="clearFavorites" class="menu-action-button-sm bg-yellow-700 hover:bg-yellow-600 flex-1">Clear Favs</button>
+                <button id="clearIgnoredTopBtn" class="menu-action-button-sm bg-purple-700 hover:bg-purple-600 flex-1">Clear Ignored</button>
+            </div>
+            <div id="menuFavList" class="max-h-60 overflow-y-auto space-y-1 text-xs pr-2"><p class="text-gray-500 italic">No favorites yet.</p></div>
+        </div>
+        <div class="border-b border-gray-600">
+             <button id="toggleFiltersBtn" class="w-full flex justify-between items-center p-4 text-left hover:bg-gray-700/50 transition">
+                 <h3 class="text-md font-semibold text-gray-200">Filters & Sorting</h3>
+                 <svg id="toggleFiltersArrow" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400 transition-transform duration-300 transform rotate-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
+             </button>
+             <div id="filtersSortingContent" class="collapsible-content">
+                 <div class="grid gap-4 p-4 pt-0 mt-2">
+                   <div class="mt-2">
+                       <label for="sortSelect" class="block text-xs font-semibold text-gray-400 mb-1">Sort by:</label>
+                       <select id="sortSelect" class="menu-input w-full"> <option value="price_desc">Price: High to Low</option> <option value="price_asc">Price: Low to High</option> <option value="quantity_desc">Quantity: High to Low</option> <option value="name_asc">Name: A to Z</option> <option value="name_desc">Name: Z to A</option> <option value="cmc_asc">Mana Cost: Low to High</option> <option value="cmc_desc">Mana Cost: High to Low</option> <option value="rarity_asc">Rarity</option> <option value="set_asc">Set/Name</option> </select>
+                   </div>
+                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                       <input type="text" id="typeInput" class="menu-input" placeholder="Type..." />
+                       <select id="raritySelect" class="menu-input"> <option value="">Rarity/All</option> <option value="common">Common</option> <option value="uncommon">Uncommon</option> <option value="rare">Rare</option> <option value="mythic">Mythic</option> <option value="special">Special</option> <option value="bonus">Bonus</option> </select>
+                       <input type="text" id="oracleInput" class="menu-input col-span-2" placeholder="Oracle text contains..." />
+                       <input type="text" id="manaCostInput" class="menu-input col-span-2" placeholder="Mana cost (e.g. {2}{W}{U})" />
+                   </div>
+                   <div class="flex flex-col gap-2 mt-1">
+                       <span class="text-xs font-semibold text-gray-400">Filter by Tags:</span>
+                       <div class="flex flex-wrap gap-2">
+                           <label class="menu-checkbox-label has-[:checked]:bg-blue-800 has-[:checked]:border-blue-600"> <input id="foilToggle" type="checkbox" class="menu-checkbox accent-blue-500 filter-toggle"> <span class="text-xs">Foil</span> </label>
+                           <label class="menu-checkbox-label has-[:checked]:bg-purple-800 has-[:checked]:border-purple-600"> <input id="etchedToggle" type="checkbox" class="menu-checkbox accent-purple-500 filter-toggle"> <span class="text-xs">Etched</span> </label>
+                           <label class="menu-checkbox-label has-[:checked]:bg-pink-800 has-[:checked]:border-pink-600"> <input id="promoToggle" type="checkbox" class="menu-checkbox accent-pink-500 filter-toggle"> <span class="text-xs">Promo</span> </label>
+                           <label class="menu-checkbox-label has-[:checked]:bg-teal-800 has-[:checked]:border-teal-600"> <input id="tokenToggle" type="checkbox" class="menu-checkbox accent-teal-500 filter-toggle"> <span class="text-xs">Token</span> </label>
+                           <label class="menu-checkbox-label has-[:checked]:bg-yellow-800 has-[:checked]:border-yellow-600"> <input id="favoriteToggle" type="checkbox" class="menu-checkbox accent-yellow-400 filter-toggle"> <span class="text-xs">Favorites Only</span> </label>
+                           <label class="menu-checkbox-label has-[:checked]:bg-gray-600 has-[:checked]:border-gray-500"> <input id="hideIgnoredToggle" type="checkbox" class="menu-checkbox accent-gray-500 filter-toggle" checked> <span class="text-xs">Hide Ignored</span> </label>
+                       </div>
+                   </div>
+                 </div>
+             </div>
+        </div>
+        <div class="p-4 mt-2">
+             <div class="flex flex-col gap-3 mb-20">
+                 <input type="file" id="importFavoritesInput" accept=".csv" class="hidden">
+                 <label for="importFavoritesInput" class="menu-action-button bg-blue-600 hover:bg-blue-500 block cursor-pointer">Import Favs (.csv)</label>
+                 <button id="exportFavorites" class="menu-action-button bg-green-600 hover:bg-green-500">Export Favs (.csv)</button>
+                 <button id="resetFilters" class="menu-action-button bg-red-600 hover:bg-red-500">Reset Filters</button>
+             </div>
+        </div>
     </div>
 
-    <!-- Advanced Search Options Section (initially hidden via inline styles) -->
-    <div id="advancedSearch" style="max-height: 0; overflow: hidden; visibility: hidden;" 
-         class="transition-[max-height,padding,margin] duration-300 ease-in-out bg-[#1e1e1e] border border-gray-700 rounded p-0 m-0 mb-0 shadow-md">
-      <div class="p-4 grid gap-4">
-        
-        <!-- Row with filter inputs: type, rarity, oracle text, mana cost -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-          <input type="text" id="typeInput" class="p-2 bg-gray-800 text-white rounded border border-gray-600 placeholder-gray-400 text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent outline-none" placeholder="Type contains..." />
-          <select id="rarityInput" class="p-2 bg-gray-800 text-white rounded border border-gray-600 text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent outline-none">
-            <option value="">All Rarities</option>
-            <option value="common">Common</option>
-            <option value="uncommon">Uncommon</option>
-            <option value="rare">Rare</option>
-            <option value="mythic">Mythic</option>
-          </select>
-          <input type="text" id="oracleInput" class="p-2 bg-gray-800 text-white rounded border border-gray-600 placeholder-gray-400 text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent outline-none" placeholder="Oracle text contains..." />
-          <input type="text" id="manaInput" class="p-2 bg-gray-800 text-white rounded border border-gray-600 placeholder-gray-400 text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent outline-none" placeholder="Mana cost (e.g. 3R, XU)" />
-        </div>
+    <div id="menuOverlay" class="fixed inset-0 bg-black bg-opacity-60 z-40 hidden transition-opacity duration-300 ease-in-out"></div>
+    <div id="loadingIndicator" class="hidden p-4 bg-gray-800 rounded-lg shadow-lg border border-gray-700"> <svg class="animate-spin h-8 w-8 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"> <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle> <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path> </svg> </div>
+    <div id="errorMessage" class="hidden p-3 text-white rounded-md shadow-md opacity-0"></div>
+    <div id="swipe-animation-container"></div>
+    <div id="fixedSearchBarContainer" class="fixed bottom-0 left-0 right-0 bg-[#1e1e1e] border-t border-gray-700 p-3 shadow-lg z-50"> <div class="max-w-xl mx-auto"> <input id="searchInput" type="text" placeholder="Search cards by name, set, text..." class="w-full px-4 py-2 border border-gray-700 rounded-lg shadow-sm bg-gray-800 text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none" /> </div> </div>
 
-        <!-- Filter by Tags Section -->
-        <div class="flex flex-col gap-2 mt-1">
-          <span class="text-xs font-semibold text-gray-400">Filter by Tags:</span>
-          <div class="flex flex-wrap gap-2">
-            <!-- Each label contains a checkbox styled with Tailwind -->
-            <label class="flex items-center gap-1.5 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition has-[:checked]:bg-blue-800 has-[:checked]:border-blue-600">
-              <input id="foilToggle" type="checkbox" class="form-checkbox w-3 h-3 text-blue-500 accent-blue-500">
-              <span class="text-xs">Foil</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition has-[:checked]:bg-purple-800 has-[:checked]:border-purple-600">
-              <input id="etchedToggle" type="checkbox" class="form-checkbox w-3 h-3 text-purple-500 accent-purple-500">
-              <span class="text-xs">Etched</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition has-[:checked]:bg-pink-800 has-[:checked]:border-pink-600">
-              <input id="promoToggle" type="checkbox" class="form-checkbox w-3 h-3 text-pink-500 accent-pink-500">
-              <span class="text-xs">Promo</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition has-[:checked]:bg-yellow-800 has-[:checked]:border-yellow-600">
-              <input id="tokenToggle" type="checkbox" class="form-checkbox w-3 h-3 text-yellow-400 accent-yellow-400">
-              <span class="text-xs">Token</span>
-            </label>
-            <label class="flex items-center gap-1.5 cursor-pointer px-2 py-1 bg-gray-800 text-white border border-gray-600 rounded-md hover:bg-gray-700 transition has-[:checked]:bg-yellow-800 has-[:checked]:border-yellow-600">
-              <input id="favoriteToggle" type="checkbox" class="form-checkbox w-3 h-3 text-yellow-400 accent-yellow-400">
-              <span class="text-xs">Favorites Only</span>
-            </label>
-          </div>
-        </div>
+    <script type="module" src="js/main.js"></script>
 
-        <!-- Sorting Options -->
-        <div class="mt-2">
-          <label for="sortSelect" class="block text-xs font-semibold text-gray-400 mb-1">Sort by:</label>
-          <select id="sortSelect" class="w-full sm:w-auto px-3 py-1.5 border border-gray-700 rounded text-xs shadow-sm bg-gray-800 text-white focus:ring-1 focus:ring-blue-500 focus:border-transparent outline-none">
-            <option value="desc">Price: High to Low</option>
-            <option value="asc">Price: Low to High</option>
-            <option value="name_asc">Name: A to Z</option>
-            <option value="name_desc">Name: Z to A</option>
-          </select>
-        </div>
-
-        <!-- Import/Export/Clear Favorites/Reset Filters Buttons -->
-        <div class="flex flex-wrap justify-end items-center gap-2 mt-3 pt-3 border-t border-gray-700">
-          <input type="file" id="importFile" accept=".csv" style="display: none;">
-          <button id="importBtn" class="action-button">Import Favs (.csv)</button>
-          <button id="exportBtn" class="action-button">Export Favs (.csv)</button>
-          <button id="clearFavoritesBtn" class="action-button bg-yellow-700 hover:bg-yellow-600">Clear All Favs</button>
-          <button id="resetFilters" class="action-button bg-red-800 hover:bg-red-700">Reset All Filters</button>
-        </div>
-      </div>
-    </div>
-    
-    <!-- Card Count (updates dynamically) -->
-    <p id="cardCount" class="text-sm text-gray-400 mb-3 text-center">Showing 0 cards</p>
-    
-    <!-- Card Container & Infinite Scroll Sentinel -->
-    <div class="overflow-x-hidden">
-      <!-- Grid container for card elements (cards are injected here by JavaScript) -->
-      <div id="cardContainer" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 px-1 justify-items-center">
-      </div>
-      
-      <!-- Sentinel element used for triggering infinite scroll loading -->
-      <div id="loadingSentinel" class="h-12 text-center text-sm text-gray-500 pt-4">
-        <span id="loadingStatus">Loading more cards...</span>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Main JavaScript module (entry point for the application) -->
-  <script type="module" src="js/main.js"></script>
 </body>
 </html>

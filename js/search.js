@@ -1,143 +1,131 @@
-import { filteredCards, allCards, resetIndex, isFavorite } from './data.js'; // Import data arrays and functions
-import { drawCards } from './render.js'; // Import render function
-
-// --- Debounce Utility ---
-// Limits the rate at which a function can fire. Useful for input events.
-function debounce(func, delay = 300) {
-    let timeoutId;
-    return function(...args) {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => {
-            func.apply(this, args);
-        }, delay);
-    };
-}
-
-// --- Sorting Logic ---
-
 /**
- * Sorts the `filteredCards` array in place based on the selected sort option.
+ * Handles filtering the card list based on user input
+ * and triggers re-rendering.
  */
-export function applySort() {
-  const sortSelect = document.getElementById("sortSelect");
-  // Default to 'desc' (Price High to Low) if element or value is missing
-  const sortValue = sortSelect?.value || "desc";
+import { getAllCards, setFilteredCards, isFavorite, isIgnored, getQuantity } from './data.js';
+import { clearCardContainer, renderCards, showNoMoreCardsMessage } from './render.js';
+import { applySort } from './sorting.js'; // Import sorting function
 
-  console.log(`Applying sort: ${sortValue}`);
-  filteredCards.sort((a, b) => {
-    // Determine values to compare based on sortValue
-    switch (sortValue) {
-      case "asc": // Price: Low to High
-        // Use || 0 to handle potential undefined/null prices
-        return (a.marketPrice || 0) - (b.marketPrice || 0);
-      case "name_asc": // Name: A to Z
-        // Use localeCompare for proper alphabetical sorting
-        return (a.Name || "").localeCompare(b.Name || "");
-      case "name_desc": // Name: Z to A
-        return (b.Name || "").localeCompare(a.Name || "");
-      case "desc": // Price: High to Low (Default)
-      default:
-        return (b.marketPrice || 0) - (a.marketPrice || 0);
-    }
-  });
-}
+// --- DOM Elements (for reading filter values) ---
+const searchInput = document.getElementById('searchInput');
+const typeInput = document.getElementById('typeInput');
+const oracleInput = document.getElementById('oracleInput');
+const manaCostInput = document.getElementById('manaCostInput');
+const raritySelect = document.getElementById('raritySelect');
+const foilToggle = document.getElementById('foilToggle');
+const etchedToggle = document.getElementById('etchedToggle');
+const promoToggle = document.getElementById('promoToggle');
+const tokenToggle = document.getElementById('tokenToggle');
+const favoriteToggle = document.getElementById('favoriteToggle');
+const hideIgnoredToggle = document.getElementById('hideIgnoredToggle');
 
 // --- Filtering Logic ---
 
 /**
- * Filters the `allCards` array based on current input/toggle values.
- * Updates the `filteredCards` array.
- * Then applies the current sort order and triggers a re-render.
+ * Filters the full card list based on current filter criteria.
+ * @returns {object[]} The filtered array of card objects.
  */
-export function filterCards() {
-  console.time("Filtering"); // Start timing the filter operation
-
-  // --- Get Filter Values from DOM ---
-  const searchInput = document.getElementById("search");
-  const typeInput = document.getElementById("typeInput");
-  const rarityInput = document.getElementById("rarityInput");
-  const oracleInput = document.getElementById("oracleInput");
-  const manaInput = document.getElementById("manaInput");
-  const foilToggle = document.getElementById("foilToggle");
-  const etchedToggle = document.getElementById("etchedToggle");
-  const promoToggle = document.getElementById("promoToggle");
-  const tokenToggle = document.getElementById("tokenToggle");
-  const favoriteToggle = document.getElementById("favoriteToggle");
-
-  // --- Normalize Filter Values ---
-  // Convert to lowercase and handle potential null elements
-  const query = searchInput?.value.toLowerCase().trim() || "";
-  const type = typeInput?.value.toLowerCase().trim() || "";
-  const rarity = rarityInput?.value.toLowerCase() || ""; // Select value is already lowercase or ""
-  const oracle = oracleInput?.value.toLowerCase().trim() || "";
-  // Normalize mana cost input (remove curly braces, uppercase)
-  const mana = manaInput?.value.trim().replace(/[{}]/g, "").toUpperCase() || "";
-
-  // Get toggle states (true/false)
-  const filterFoil = foilToggle?.checked || false;
-  const filterEtched = etchedToggle?.checked || false;
-  const filterPromo = promoToggle?.checked || false;
-  const filterTokenOnly = tokenToggle?.checked || false;
-  const filterFavoritesOnly = favoriteToggle?.checked || false;
-
-    // --- Perform Filtering ---
-  const newlyFilteredCards = allCards.filter(card => {
-    // --- Prepare Card Data for Matching ---
-    const s = card.scryfall || {}; // Safe access to Scryfall data
-    // Normalize card data for comparison
-    const cardType = (s.type_line || "").toLowerCase();
-    const cardOracle = (s.oracle_text || "").toLowerCase();
-    const cardMana = (s.mana_cost || "").replace(/[{}]/g, "").toUpperCase();
-    const cardRarity = (s.rarity || "unknown").toLowerCase();
-    const foilType = (card.Foil || "normal").toLowerCase();
-    const isPromo = s.promo === true;
-    const isToken = s.layout === "token";
-    const cardId = card['Scryfall ID'];
-
-    // Use pre-calculated searchableText if available, otherwise build it (less efficient)
-    const searchableText = card.searchableText || [card.Name, s.set_name, card["Set code"], cardType, cardOracle, cardRarity].filter(Boolean).join(" ").toLowerCase();
-
-    // --- Apply Filters (all must be true to include card) ---
-
-    // 1. General Search Query (checks combined searchable text)
-    const queryMatch = !query || searchableText.includes(query);
-
-    // 2. Specific Field Filters
-    const rarityMatch = !rarity || cardRarity === rarity;
-    const typeMatch = !type || cardType.includes(type);
-    const oracleMatch = !oracle || cardOracle.includes(oracle);
-    const manaMatch = !mana || cardMana.includes(mana); // Simple includes check for mana cost
-
-     // 3. Tag Filters (Checkboxes) - COMBINED LOGIC
-    let tagMatch = true; // Start by assuming it matches
-
-    if (filterFoil || filterEtched || filterPromo) {
-        tagMatch = false; // If ANY of these are checked, we need to find a match
-        if (filterFoil && foilType === 'foil') tagMatch = true; // Foil match
-        if (filterEtched && foilType === 'etched') tagMatch = true; // Etched match
-        if (filterPromo && isPromo) tagMatch = true; // Promo match
+function filterCards() {
+    const allCards = getAllCards();
+    if (!allCards || allCards.length === 0) {
+        return []; // Return empty if no base data
     }
 
-    // 4. Token Filter
-    const tokenMatch = !filterTokenOnly || isToken;
+    // Get filter values safely, providing defaults
+    const searchTerm = searchInput?.value.toLowerCase().trim() || '';
+    const typeTerm = typeInput?.value.toLowerCase().trim() || '';
+    const oracleTerm = oracleInput?.value.toLowerCase().trim() || '';
+    const manaCostTerm = manaCostInput?.value.toLowerCase().trim() || '';
+    const rarityTerm = raritySelect?.value || '';
+    const showFoil = foilToggle?.checked || false;
+    const showEtched = etchedToggle?.checked || false;
+    const showPromo = promoToggle?.checked || false;
+    const showToken = tokenToggle?.checked || false;
+    const showOnlyFavorites = favoriteToggle?.checked || false;
+    const hideIgnored = hideIgnoredToggle?.checked || false; // Default to true if element missing
 
-     // 5. Favorite Filter
-    const favoriteMatch = !filterFavoritesOnly || isFavorite(cardId);
+    console.log("Filtering with:", { searchTerm, typeTerm, oracleTerm, manaCostTerm, rarityTerm, showFoil, showEtched, showPromo, showToken, showOnlyFavorites, hideIgnored });
 
-    // Return true only if *all* filter conditions are met
-    return queryMatch && rarityMatch && typeMatch && oracleMatch && manaMatch &&
-           tagMatch && tokenMatch && favoriteMatch;
-  });
+    const filtered = allCards.filter(card => {
+        // --- Text Filters ---
+        // Use pre-calculated searchableText if available and efficient
+        if (searchTerm && !card.searchableText?.includes(searchTerm)) {
+             // Fallback to checking individual fields if searchableText is missing or doesn't match
+             const nameMatch = card.name?.toLowerCase().includes(searchTerm);
+             const typeMatch = card.typeLine?.toLowerCase().includes(searchTerm);
+             const oracleMatch = card.oracleText?.toLowerCase().includes(searchTerm);
+             const setMatch = card.setName?.toLowerCase().includes(searchTerm);
+             if (!nameMatch && !typeMatch && !oracleMatch && !setMatch) {
+                 return false;
+             }
+        }
+        if (typeTerm && !card.typeLine?.toLowerCase().includes(typeTerm)) {
+            return false;
+        }
+        if (oracleTerm && !card.oracleText?.toLowerCase().includes(oracleTerm)) {
+            return false;
+        }
+        // Mana cost needs careful handling for symbols like {W}
+        // Simple includes check might suffice for basic filtering
+        if (manaCostTerm && !card.manaCost?.toLowerCase().includes(manaCostTerm)) {
+             // Could implement more robust mana cost parsing/matching if needed
+             return false;
+        }
 
-  // Update the global filteredCards array
-  filteredCards.length = 0; // Clear the existing array
-  filteredCards.push(...newlyFilteredCards); // Push the new results
+        // --- Select Filters ---
+        if (rarityTerm && card.rarity !== rarityTerm) {
+            return false;
+        }
 
-  console.timeEnd("Filtering"); // Stop timing
-  console.log(`Filtered down to ${filteredCards.length} cards.`);
+        // --- Toggle Filters ---
+        if (showFoil && !card.isFoil) return false;
+        if (showEtched && !card.isEtched) return false;
+        if (showPromo && !card.isPromo) return false;
+        // Use pre-calculated isToken flag if available
+        if (showToken && !(card.isToken ?? card.layout === 'token')) return false;
 
-  // --- Post-Filtering Actions ---
-  applySort(); // Apply the current sort order to the newly filtered list
-  resetIndex(); // Reset the infinite scroll index to the beginning
-  drawCards(true); // Draw the first batch of cards, clearing previous ones
+        // --- Favorite/Ignored Filters ---
+        // Use runtime flags set in data.js
+        if (showOnlyFavorites && !card.isFavorite) return false;
+        if (hideIgnored && card.isIgnored) return false;
+
+        // --- Quantity Filter (Implicit: Hide cards with 0 quantity?) ---
+        // Decide if cards with quantity 0 should be hidden by default or via a toggle
+        // const currentQuantity = getQuantity(card.id);
+        // if (currentQuantity <= 0) return false; // Uncomment to hide 0 quantity cards
+
+        // If all checks pass, include the card
+        return true;
+    });
+
+    console.log(`Filtering complete. ${filtered.length} cards matched.`);
+    return filtered;
+}
+
+// --- Public Function ---
+
+/**
+ * Applies current filters, updates the filtered card list in data.js,
+ * applies sorting, clears the display, and renders the first batch.
+ */
+export function filterAndRenderCards() {
+    console.log("Applying filters and re-rendering...");
+    const newlyFilteredCards = filterCards();
+
+    // Update the shared filtered card state
+    setFilteredCards(newlyFilteredCards);
+
+    // Apply the current sort order to the newly filtered list
+    applySort(); // Sorts the array stored via setFilteredCards
+
+    // Prepare UI for new results
+    clearCardContainer(); // Clear existing cards
+
+    // Render the first batch of the *newly sorted and filtered* list
+    if (newlyFilteredCards.length > 0) {
+        renderCards(); // Renders the initial batch based on the updated state
+    } else {
+        // If filtering results in zero cards, show appropriate message
+        showNoMoreCardsMessage('No cards match the current filters.');
+    }
 }

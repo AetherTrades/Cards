@@ -1,394 +1,432 @@
-// Cards/js/data.js
-import { filterCards, applySort } from "./search.js"; // Import search/sort functions
-import { setupObserver } from "./observer.js"; // Import observer for infinite scroll
+/**
+ * Manages application state including card data, filters, sorting,
+ * user preferences (favorites, ignored, quantities), and localStorage interaction.
+ */
+import { applySort } from './sorting.js';
+import { displayError, displayInfo } from './utils.js'; // Import utility for error/info display
 
 // --- State Variables ---
-export let allCards = []; // Holds all cards after initial processing
-export let filteredCards = []; // Holds currently visible cards after filtering/sorting
-export const cardsPerBatch = 50; // Number of cards to load per batch (infinite scroll)
-let currentIndex = 0; // Index for tracking the next batch to load
-let favorites = new Set(); // Holds Scryfall IDs of favorited cards
+let allCards = []; // Holds the raw data for all cards from cards.json
+let filteredCards = []; // Holds the cards currently matching filters
+let favorites = new Set(); // Set of unique card IDs marked as favorite
+let ignored = new Set(); // Set of unique card IDs marked as ignored
+let cardQuantities = {}; // Object storing { cardId: quantity } overrides
 
-const FAVORITES_LOCAL_STORAGE_KEY = 'mtgCardFavorites'; // Key for localStorage
+let currentIndex = 0; // Index for infinite scrolling batches
+const CARDS_PER_BATCH = 20; // Number of cards to load per scroll batch
 
-// --- Favorite Management ---
+// --- LocalStorage Keys ---
+const LS_KEYS = {
+    FAVORITES: 'mtgViewer_favorites',
+    IGNORED: 'mtgViewer_ignored',
+    QUANTITIES: 'mtgViewer_quantities',
+};
+
+// --- Private Helper Functions ---
 
 /**
- * Loads favorite card IDs from localStorage into the `favorites` Set.
+ * Loads data from localStorage safely.
+ * @param {string} key - The localStorage key.
+ * @returns {any} The parsed data or null if not found or error occurs.
  */
-function loadFavorites() {
-  const storedFavorites = localStorage.getItem(FAVORITES_LOCAL_STORAGE_KEY);
-  if (storedFavorites) {
+function loadFromLocalStorage(key) {
     try {
-      const parsedFavorites = JSON.parse(storedFavorites);
-      // Ensure it's an array of strings before creating the Set
-      if (Array.isArray(parsedFavorites) && parsedFavorites.every(id => typeof id === 'string')) {
-        favorites = new Set(parsedFavorites);
-        console.log(`⭐ Loaded ${favorites.size} favorites from localStorage.`);
-      } else {
-         console.warn("⚠️ Corrupted or invalid favorites data in localStorage, starting fresh.");
-         favorites = new Set();
-         localStorage.removeItem(FAVORITES_LOCAL_STORAGE_KEY); // Clear corrupted data
-      }
-    } catch (e) {
-      console.error("❌ Error parsing favorites from localStorage:", e);
-      favorites = new Set(); // Reset on error
-      localStorage.removeItem(FAVORITES_LOCAL_STORAGE_KEY); // Clear potentially bad data
-    }
-  } else {
-      console.log("⭐ No favorites found in localStorage.");
-      favorites = new Set(); // Initialize empty set if nothing is stored
-  }
-}
-
-/**
- * Saves the current `favorites` Set to localStorage.
- */
-function saveFavorites() {
-  try {
-    // Convert Set to Array before storing as JSON
-    localStorage.setItem(FAVORITES_LOCAL_STORAGE_KEY, JSON.stringify(Array.from(favorites)));
-  } catch (e) {
-      console.error("❌ Error saving favorites to localStorage:", e);
-      // Could be due to storage limits or browser settings
-      alert("Could not save favorites. Local storage might be full or disabled.");
-  }
-}
-
-/**
- * Checks if a card ID is currently favorited.
- * @param {string} cardId - The Scryfall ID of the card.
- * @returns {boolean} - True if the card is a favorite.
- */
-export function isFavorite(cardId) {
-  // Ensure cardId is treated as a string for Set comparison
-  return favorites.has(String(cardId));
-}
-
-/**
- * Returns an array of all currently favorited card IDs.
- * @returns {string[]} An array of Scryfall IDs.
- */
-export function getFavoriteIds() {
-    return Array.from(favorites);
-}
-
-/**
- * Adds a card ID to the favorites Set and saves to localStorage.
- * Performs basic validation and trimming. Ensures ID is stored as string.
- * @param {string | number} cardId - The Scryfall ID to add.
- * @returns {boolean} - True if the ID was newly added, false otherwise.
- */
-export function addFavorite(cardId) {
-  if (cardId === null || cardId === undefined) return false;
-  const idAsString = String(cardId).trim(); // Convert to string and trim
-  if (idAsString.length === 0) return false; // Ignore empty strings
-
-  // Add only if it's not already present
-  if (!favorites.has(idAsString)) {
-    favorites.add(idAsString);
-    saveFavorites(); // Persist changes
-    console.log(`⭐ Added ${idAsString} to favorites.`);
-    return true; // Indicate a change occurred
-  }
-  return false; // Indicate no change needed
-}
-
-/**
- * Removes a card ID from the favorites Set and saves to localStorage.
- * Performs basic validation and trimming. Ensures ID is treated as string.
- * @param {string | number} cardId - The Scryfall ID to remove.
- * @returns {boolean} - True if the ID was removed, false otherwise.
- */
-export function removeFavorite(cardId) {
-  if (cardId === null || cardId === undefined) return false;
-  const idAsString = String(cardId).trim(); // Convert to string and trim
-
-  // Remove only if it exists
-  if (favorites.has(idAsString)) {
-      favorites.delete(idAsString);
-      saveFavorites(); // Persist changes
-      console.log(`⭐ Removed ${idAsString} from favorites.`);
-      return true; // Indicate a change occurred
-  }
-  return false; // Indicate no change needed
-}
-/**
- * Clears all favorited card IDs from the favorites Set and persists the change.
- */
-export function clearFavorites() {
-  favorites.clear();
-  saveFavorites();
-  console.log("⭐ Cleared all favorites from localStorage.");
-}
-
-/**
- * Toggles the favorite status of a card ID. Ensures ID is treated as string.
- * @param {string | number} cardId - The Scryfall ID to toggle.
- * @returns {boolean} - The new favorite status (true if now favorited, false if not).
- */
-export function toggleFavorite(cardId) {
-    if (cardId === null || cardId === undefined) return false;
-    const idAsString = String(cardId).trim(); // Convert to string and trim
-    if (idAsString.length === 0) return false;
-
-    if (favorites.has(idAsString)) {
-        removeFavorite(idAsString);
-        return false; // Was favorite, now removed
-    } else {
-        addFavorite(idAsString);
-        return true; // Was not favorite, now added
-    }
-}
-
-/**
- * Generates a CSV file containing favorite card IDs and triggers download.
- */
-export function exportFavoritesCSV() {
-  const ids = getFavoriteIds(); // Get current favorite IDs
-  if (ids.length === 0) {
-    alert("You have no favorited cards to export.");
-    console.warn("⚠️ Attempted to export empty favorites list.");
-    return; // Exit if nothing to export
-  }
-
-  // Start CSV content with header row
-  let csvContent = "Scryfall ID\r\n"; // Use CRLF for broad compatibility
-  // Add each ID on a new line
-  ids.forEach(id => {
-    // Basic CSV escaping (wrap in quotes if ID contains comma, quote, or newline - unlikely for Scryfall IDs but good practice)
-    let escapedId = id;
-    if (/[",\r\n]/.test(id)) {
-        escapedId = `"${id.replace(/"/g, '""')}"`; // Double up existing quotes
-    }
-    csvContent += `${escapedId}\r\n`;
-  });
-
-  // Create a Blob object for the CSV data
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-
-  // Create a temporary link element to trigger the download
-  const link = document.createElement("a");
-  const url = URL.createObjectURL(blob); // Create a temporary URL for the blob
-  link.setAttribute("href", url);
-
-  // Generate filename with current date
-  const date = new Date();
-  const dateString = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
-  link.setAttribute("download", `mtg_favorites_${dateString}.csv`);
-  link.style.visibility = 'hidden'; // Hide the link
-  document.body.appendChild(link); // Append link to the body
-
-  console.log(`⬇️ Exporting ${ids.length} favorites to CSV...`);
-  link.click(); // Simulate a click to trigger download
-
-  // Clean up by removing the link and revoking the object URL
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  console.log("✅ Export complete.");
-}
-
-/**
- * Imports favorite card IDs from a user-selected CSV file.
- * Reads the file, parses IDs, adds them to the `favorites` Set, and saves.
- * @param {File} file - The CSV file object from the file input.
- */
-export function importFavoritesCSV(file) {
-  // Basic file validation
-  if (!file) {
-    alert("No file selected for import.");
-    return;
-  }
-  if (!file.name.toLowerCase().endsWith(".csv") || file.type !== 'text/csv') {
-      alert("Invalid file type. Please select a .csv file.");
-      return;
-  }
-
-  const reader = new FileReader(); // Use FileReader API to read file content
-
-  // Define what happens when the file is successfully read
-  reader.onload = (event) => {
-    try {
-      const csvData = event.target.result; // Get file content as text
-      const lines = csvData.split(/\r?\n/); // Split into lines (handles Windows/Unix endings)
-
-      if (lines.length === 0) {
-          alert("CSV file appears to be empty.");
-          return;
-      }
-
-      let importedCount = 0; // Total IDs processed
-      let addedCount = 0; // IDs newly added to favorites
-
-      // Check if the first line is a header and skip it
-      const header = lines[0].trim().toLowerCase().replace(/^"|"$/g, ''); // Trim, lowercase, remove surrounding quotes
-      const startIndex = (header === "scryfall id") ? 1 : 0; // Start from line 1 if header found
-
-      console.log(`📄 Importing favorites from ${file.name}... Found ${lines.length - startIndex} potential entries.`);
-
-      // Process each line (starting after header if applicable)
-      for (let i = startIndex; i < lines.length; i++) {
-        const line = lines[i].trim(); // Trim whitespace from the line
-        if (line) { // Only process non-empty lines
-          // Remove potential surrounding quotes from the ID itself
-          const cardId = line.replace(/^"|"$/g, '');
-          // Use addFavorite which handles validation, duplicates, and saving
-          if (addFavorite(cardId)) { // addFavorite ensures it's treated as string
-            addedCount++; // Increment if it was a new addition
-          }
-          importedCount++; // Increment total processed count
+        const data = localStorage.getItem(key);
+        return data ? JSON.parse(data) : null;
+    } catch (error) {
+        console.error(`Error loading data from localStorage (key: ${key}):`, error);
+        displayError(`Could not load saved ${key.split('_')[1]}. Data might be corrupted.`, error, true); // Non-critical error
+        // Attempt to remove corrupted data
+        try {
+            localStorage.removeItem(key);
+        } catch (removeError) {
+            console.error(`Error removing corrupted localStorage item (key: ${key}):`, removeError);
         }
-      }
+        return null;
+    }
+}
 
-      // Provide feedback to the user
-      alert(`Import finished.\nProcessed: ${importedCount} IDs\nNewly Added: ${addedCount}`);
-      console.log(`✅ Import complete. Added ${addedCount} new favorites out of ${importedCount} processed.`);
+/**
+ * Saves data to localStorage safely.
+ * @param {string} key - The localStorage key.
+ * @param {any} data - The data to save (will be JSON.stringified).
+ */
+function saveToLocalStorage(key, data) {
+    try {
+        localStorage.setItem(key, JSON.stringify(data));
+    } catch (error) {
+        console.error(`Error saving data to localStorage (key: ${key}):`, error);
+        // Handle potential quota exceeded error
+        if (error.name === 'QuotaExceededError') {
+             displayError('Could not save changes. Browser storage limit reached. Try clearing favorites/ignored lists or browser cache.', error);
+        } else {
+            displayError(`Could not save ${key.split('_')[1]}. Changes might not persist.`, error, true); // Non-critical
+        }
+    }
+}
 
-      // Note: UI refresh (updating stars, re-filtering) is handled in events.js after this function completes.
+// --- Public Data Access and Manipulation ---
+
+/**
+ * Fetches card data from the JSON file and loads user preferences.
+ * @returns {Promise<void>}
+ */
+export async function loadInitialData() {
+    console.log("Loading initial data...");
+    try {
+        // Fetch card data
+        const response = await fetch('data/cards.json');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+        }
+        allCards = await response.json();
+        console.log(`Loaded ${allCards.length} cards from JSON.`);
+
+        // Load user preferences from localStorage
+        const savedFavorites = loadFromLocalStorage(LS_KEYS.FAVORITES);
+        const savedIgnored = loadFromLocalStorage(LS_KEYS.IGNORED);
+        const savedQuantities = loadFromLocalStorage(LS_KEYS.QUANTITIES);
+
+        if (savedFavorites && Array.isArray(savedFavorites)) {
+            favorites = new Set(savedFavorites);
+            console.log(`Loaded ${favorites.size} favorites.`);
+        } else {
+            favorites = new Set(); // Initialize as empty set if loading fails or no data
+        }
+
+        if (savedIgnored && Array.isArray(savedIgnored)) {
+            ignored = new Set(savedIgnored);
+             console.log(`Loaded ${ignored.size} ignored cards.`);
+        } else {
+            ignored = new Set();
+        }
+
+        if (savedQuantities && typeof savedQuantities === 'object') {
+            cardQuantities = savedQuantities;
+             console.log(`Loaded ${Object.keys(cardQuantities).length} quantity overrides.`);
+        } else {
+            cardQuantities = {};
+        }
+
+        // Add runtime flags to allCards based on loaded state
+        allCards.forEach(card => {
+            card.isFavorite = favorites.has(card.id);
+            card.isIgnored = ignored.has(card.id);
+            // Ensure quantity is correct (override or default from JSON)
+            card.currentQuantity = cardQuantities[card.id] ?? card.quantity;
+        });
+
 
     } catch (error) {
-      console.error("❌ Error reading or parsing CSV file:", error);
-      alert("An error occurred while importing the file. Check console for details.");
+        console.error("Failed to load initial card data:", error);
+        allCards = []; // Ensure allCards is empty on failure
+        // Display a user-facing error message
+        displayError("Failed to load card data. The application might not work correctly. Please check the console (F12) for details and try refreshing.", error);
+        throw error; // Re-throw to be caught by main initialization
     }
-  };
-
-  // Define what happens on file reading error
-  reader.onerror = (event) => {
-      console.error("❌ File reading error:", reader.error);
-      alert("Failed to read the selected file.");
-  };
-
-  // Start reading the file as text
-  reader.readAsText(file);
 }
 
-// --- Index Management for Infinite Scroll ---
-export function getCurrentIndex() { return currentIndex; }
-export function incrementIndex() { currentIndex += cardsPerBatch; }
-export function resetIndex() { currentIndex = 0; }
+/**
+ * Applies the default sort and filter state on initialization.
+ * Typically called after data loading and event listener setup.
+ */
+export function setInitialState() {
+    // Start with all cards visible (unless 'Hide Ignored' is checked by default)
+    const hideIgnoredToggle = document.getElementById('hideIgnoredToggle');
+    if (hideIgnoredToggle?.checked) {
+        filteredCards = allCards.filter(card => !card.isIgnored);
+    } else {
+        filteredCards = [...allCards];
+    }
 
-// --- Initial Data Fetching and Processing ---
+    // Apply the default sort selected in the dropdown
+    applySort(); // This sorts the initial filteredCards
+    resetCurrentIndex(); // Reset index after initial sort/filter
+    console.log("Initial state set.");
+}
+
+
+/** Returns the full list of cards. */
+export function getAllCards() {
+    return allCards;
+}
+
+/** Returns the currently filtered list of cards. */
+export function getFilteredCards() {
+    return filteredCards;
+}
+
+/** Sets the filtered card list (used by search.js). */
+export function setFilteredCards(newFilteredCards) {
+    filteredCards = newFilteredCards;
+    resetCurrentIndex(); // Reset index whenever filters change
+}
+
+/** Resets the infinite scroll index. */
+export function resetCurrentIndex() {
+    currentIndex = 0;
+}
+
+/** Gets the next batch of cards for infinite scrolling. */
+export function getNextBatch() {
+    const batch = filteredCards.slice(currentIndex, currentIndex + CARDS_PER_BATCH);
+    currentIndex += batch.length; // Increment index by the actual batch size fetched
+    return batch;
+}
+
+/** Checks if there are more cards to load. */
+export function hasMoreCards() {
+    return currentIndex < filteredCards.length;
+}
+
+/** Gets the total count of filtered cards. */
+export function getFilteredCount() {
+    return filteredCards.length;
+}
+
+// --- Favorites Management ---
+
+/** Checks if a card is favorited. */
+export function isFavorite(cardId) {
+    return favorites.has(cardId);
+}
+
+/** Toggles the favorite status of a card. */
+export function toggleFavorite(cardId) {
+    const card = allCards.find(c => c.id === cardId);
+    if (!card) return false; // Card not found
+
+    if (favorites.has(cardId)) {
+        favorites.delete(cardId);
+        card.isFavorite = false;
+        console.log(`Card removed from favorites: ${cardId}`);
+    } else {
+        favorites.add(cardId);
+        card.isFavorite = true;
+        // If favoriting an ignored card, un-ignore it
+        if (ignored.has(cardId)) {
+            removeIgnored(cardId); // This also updates card.isIgnored
+        }
+        console.log(`Card added to favorites: ${cardId}`);
+    }
+    saveToLocalStorage(LS_KEYS.FAVORITES, Array.from(favorites));
+    return card.isFavorite; // Return the new status
+}
+
+/** Gets all favorite cards. */
+export function getFavorites() {
+    return allCards.filter(card => favorites.has(card.id));
+}
+
+/** Clears all favorites. */
+export function clearFavorites() {
+    if (favorites.size === 0) {
+        displayInfo("Favorite list is already empty.");
+        return;
+    }
+    if (confirm(`Are you sure you want to clear all ${favorites.size} favorites? This cannot be undone.`)) {
+        favorites.forEach(cardId => {
+            const card = allCards.find(c => c.id === cardId);
+            if (card) card.isFavorite = false;
+        });
+        favorites.clear();
+        saveToLocalStorage(LS_KEYS.FAVORITES, []);
+        console.log("Favorites cleared.");
+        displayInfo("Favorites list cleared.");
+        // Requires UI update (menu, potentially card display if filter active)
+    }
+}
+
+/** Imports favorites from a CSV file content. */
+export function importFavoritesCSV(csvContent) {
+    return new Promise((resolve, reject) => {
+        Papa.parse(csvContent, {
+            header: true, // Expect headers like 'id' or 'Scryfall ID'
+            skipEmptyLines: true,
+            complete: (results) => {
+                if (results.errors.length > 0) {
+                    console.warn("CSV Parsing Errors during import:", results.errors);
+                    // Continue processing, but warn the user
+                }
+                if (!results.data || results.data.length === 0) {
+                    return reject(new Error("CSV file is empty or contains no data."));
+                }
+
+                let importedCount = 0;
+                let notFoundCount = 0;
+                const currentFavorites = Array.from(favorites); // Get current list
+
+                results.data.forEach(row => {
+                    // Try to find ID using common header names
+                    const cardId = row['id'] || row['ID'] || row['Scryfall ID'] || row['ScryfallID'];
+                    if (cardId) {
+                        // Check if this card exists in our main data
+                        const cardExists = allCards.some(c => c.id === cardId || c.scryfallId === cardId);
+                        if (cardExists) {
+                            if (!favorites.has(cardId)) {
+                                favorites.add(cardId);
+                                const card = allCards.find(c => c.id === cardId || c.scryfallId === cardId);
+                                if(card) card.isFavorite = true; // Update runtime flag
+                                importedCount++;
+                            }
+                        } else {
+                            console.warn(`Card ID "${cardId}" from CSV not found in collection.`);
+                            notFoundCount++;
+                        }
+                    } else {
+                        console.warn("Skipping row in CSV import: No 'id' or 'Scryfall ID' column found.", row);
+                    }
+                });
+
+                if (importedCount > 0) {
+                    saveToLocalStorage(LS_KEYS.FAVORITES, Array.from(favorites));
+                }
+                resolve({ importedCount, totalRows: results.data.length, notFoundCount });
+            },
+            error: (error) => reject(new Error(`CSV Parsing Failed: ${error.message}`))
+        });
+    });
+}
+
+/** Exports favorites to a CSV string. */
+export function exportFavoritesCSV() {
+    const favs = getFavorites();
+    if (favs.length === 0) {
+        displayInfo("No favorites to export.");
+        return null;
+    }
+
+    // Define headers - include useful info
+    const headers = ['id', 'Name', 'Set', 'Collector Number', 'Rarity', 'Quantity', 'Foil', 'Etched', 'My Price', 'Market Price USD'];
+    const rows = favs.map(card => ({
+        'id': card.id,
+        'Name': card.name,
+        'Set': card.set.toUpperCase(),
+        'Collector Number': card.collectorNumber,
+        'Rarity': card.rarity,
+        'Quantity': getQuantity(card.id), // Use current quantity
+        'Foil': card.isFoil,
+        'Etched': card.isEtched,
+        'My Price': card.myPrice?.toFixed(2) ?? '',
+        'Market Price USD': card.prices?.usd?.toFixed(2) ?? '',
+    }));
+
+    try {
+        return Papa.unparse({ fields: headers, data: rows });
+    } catch (error) {
+        console.error("Error creating favorites CSV:", error);
+        displayError("Failed to generate favorites CSV.", error);
+        return null;
+    }
+}
+
+
+// --- Ignored Management ---
+
+/** Checks if a card is ignored. */
+export function isIgnored(cardId) {
+    return ignored.has(cardId);
+}
+
+/** Adds a card to the ignored list. */
+export function addIgnored(cardId) {
+     const card = allCards.find(c => c.id === cardId);
+    if (!card) return false;
+
+    if (!ignored.has(cardId)) {
+        ignored.add(cardId);
+        card.isIgnored = true;
+        // If ignoring a favorited card, un-favorite it
+        if (favorites.has(cardId)) {
+            toggleFavorite(cardId); // This also updates card.isFavorite
+        }
+        saveToLocalStorage(LS_KEYS.IGNORED, Array.from(ignored));
+        console.log(`Card added to ignored: ${cardId}`);
+        return true;
+    }
+    return false; // Already ignored
+}
+
+/** Removes a card from the ignored list. */
+export function removeIgnored(cardId) {
+     const card = allCards.find(c => c.id === cardId);
+    if (!card) return false;
+
+    if (ignored.has(cardId)) {
+        ignored.delete(cardId);
+        card.isIgnored = false;
+        saveToLocalStorage(LS_KEYS.IGNORED, Array.from(ignored));
+         console.log(`Card removed from ignored: ${cardId}`);
+        return true;
+    }
+    return false; // Wasn't ignored
+}
+
+/** Clears the ignored list. */
+export function clearIgnored() {
+    if (ignored.size === 0) {
+        displayInfo("Ignored list is already empty.");
+        return;
+    }
+     if (confirm(`Are you sure you want to clear all ${ignored.size} ignored cards? This cannot be undone.`)) {
+        ignored.forEach(cardId => {
+            const card = allCards.find(c => c.id === cardId);
+            if (card) card.isIgnored = false;
+        });
+        ignored.clear();
+        saveToLocalStorage(LS_KEYS.IGNORED, []);
+        console.log("Ignored list cleared.");
+        displayInfo("Ignored list cleared.");
+        // Requires UI update if filter needs re-applying
+    }
+}
+
+// --- Quantity Management ---
 
 /**
- * Fetches card data from `cards.json`, processes it (calculates prices,
- * creates searchable text), loads favorites, applies initial sort,
- * triggers the first render, and sets up the infinite scroll observer.
+ * Gets the current quantity for a card.
+ * Returns the override from cardQuantities if set, otherwise the default from allCards.
+ * @param {string} cardId - The unique card ID.
+ * @returns {number} The current quantity.
  */
-export async function fetchAndProcessData() {
-  console.log("✅ Initializing data fetch and processing...");
-  loadFavorites(); // Load favorites *before* processing cards
+export function getQuantity(cardId) {
+    // Find the card in the main list first to get its default quantity
+    const card = allCards.find(c => c.id === cardId);
+    const defaultQuantity = card ? card.quantity : 0; // Default from JSON/CSV
+    // Return override if exists, otherwise default
+    return cardQuantities[cardId] ?? defaultQuantity;
+}
 
-  // Get UI elements for feedback
-  const cardCountEl = document.getElementById("cardCount");
-  const loadingStatusEl = document.getElementById("loadingStatus");
-
-  try {
-    // --- Fetch JSON Data ---
-    console.log("Fetching cards.json...");
-    const response = await fetch("./data/cards.json"); // Fetch the local JSON file
-    if (!response.ok) {
-        throw new Error(`HTTP error fetching cards.json! status: ${response.status}`);
-    }
-    console.log("Parsing cards.json...");
-    const jsonData = await response.json();
-    if (!Array.isArray(jsonData)) {
-      throw new Error("Fetched data is not an array.");
-    }
-    console.log(`📦 Loaded ${jsonData.length} raw entries from cards.json`);
-
-    // Handle empty data file
-    if (jsonData.length === 0) {
-      console.warn("⚠️ cards.json is empty.");
-      allCards = [];
-      filteredCards = [];
-      if (cardCountEl) cardCountEl.textContent = "Showing 0 cards";
-      if (loadingStatusEl) loadingStatusEl.textContent = "No cards found.";
-      return; // Stop processing if no data
+/**
+ * Updates the quantity for a specific card.
+ * Stores the quantity in cardQuantities only if it differs from the card's default quantity.
+ * @param {string} cardId - The unique card ID.
+ * @param {number} newQuantity - The new quantity to set.
+ * @returns {boolean} True if the quantity was successfully updated, false otherwise.
+ */
+export function updateQuantity(cardId, newQuantity) {
+    const card = allCards.find(c => c.id === cardId);
+    if (!card) {
+        console.error(`Cannot update quantity: Card with ID ${cardId} not found.`);
+        return false;
     }
 
-    // --- Process JSON Data ---
-    console.log("Processing card data...");
-    const processedCards = jsonData
-      // Filter out any null/undefined entries or entries missing a Scryfall ID
-      .filter(card => card && typeof card === 'object' && card['Scryfall ID'])
-      .map((card, i) => {
-        // --- Data Cleaning & Calculation ---
-        const scry = card.scryfall || {}; // Ensure scryfall object exists
-        // Parse prices, defaulting to 0 if invalid/missing
-        const marketPriceNum = parseFloat(card.marketPrice || card["Purchase price"] || "0") || 0;
-        // Calculate 'My Price' if missing, based on market price
-        const myPriceNum = parseFloat(card.myPrice || (marketPriceNum * MY_PRICE_MULTIPLIER)) || 0;
-        const cardId = String(card['Scryfall ID']); // Ensure ID is a string here
+    // Ensure quantity is a non-negative integer
+    const quantity = Math.max(0, Math.floor(newQuantity));
 
-        // --- Create Searchable Text ---
-        // Combine relevant fields into a single lowercase string for easy searching
-        const searchableText = [
-          card.Name,
-          scry.set_name,
-          card["Set code"],
-          scry.type_line,
-          scry.oracle_text,
-          scry.rarity,
-          card.Foil // Include foil status in search
-        ].filter(Boolean).join(" ").toLowerCase(); // Filter out null/undefined, join, lowercase
+    // Update the runtime quantity
+    card.currentQuantity = quantity;
 
-        // --- Add Favorite Status ---
-        // Check if this card's ID is in the loaded favorites Set
-        const favoriteStatus = isFavorite(cardId); // Use the string ID
-
-        // Return the processed card object with added/calculated fields
-        return {
-          ...card, // Spread original card properties
-          'Scryfall ID': cardId, // Ensure the ID in the object is also a string
-          __originalIndex: i, // Keep original index if needed later
-          marketPrice: marketPriceNum, // Store calculated market price
-          myPrice: myPriceNum, // Store calculated 'my price'
-          searchableText: searchableText, // Store combined search text
-          isFavorite: favoriteStatus // Store favorite status boolean
-        };
-      });
-    console.log(`✅ Finished processing ${processedCards.length} valid cards.`);
-
-    // --- Final State Update & Initial Render ---
-    allCards = processedCards; // Store all processed cards
-    filteredCards = [...allCards]; // Initially, filtered list is a copy of all cards
-
-    // Handle case where processing resulted in no cards
-    if (allCards.length === 0) {
-      console.warn("⚠️ No cards remained after processing.");
-      if (cardCountEl) cardCountEl.textContent = "Showing 0 cards";
-      if (loadingStatusEl) loadingStatusEl.textContent = "No cards to display.";
-      return;
-    }
-
-    console.log("Applying initial sort...");
-    // Set default sort dropdown value (optional)
-    const sortSelect = document.getElementById("sortSelect");
-    if (sortSelect) sortSelect.value = "desc"; // Default to Price High-Low
-    applySort(); // Apply the initial sort
-
-    console.log("Performing initial render...");
-    filterCards(); // Run initial filter (which also calls resetIndex and drawCards(true))
-
-    console.log("Setting up infinite scroll observer...");
-    setupObserver(); // Initialize the IntersectionObserver
-
-    console.log("✅ Initialization complete.");
-
-  } catch (err) {
-    // --- Error Handling ---
-    console.error("❌❌❌ Critical Error during data fetching or processing:", err);
-    // Provide feedback in UI
-    if (cardCountEl) cardCountEl.textContent = "Error loading cards";
-    if (loadingStatusEl) {
-      loadingStatusEl.textContent = "Failed to load card data. Check console for details.";
-    }
-    // Log detailed error info
-    if (err instanceof Error) {
-      console.error("Error Message:", err.message);
-      console.error("Error Stack:", err.stack);
+    // Update the persistent override map
+    if (quantity === card.quantity) {
+        // If quantity matches default, remove override (clean up)
+        delete cardQuantities[cardId];
     } else {
-      console.error("Caught non-Error object:", err);
+        // Otherwise, store the override
+        cardQuantities[cardId] = quantity;
     }
-  }
+
+    saveToLocalStorage(LS_KEYS.QUANTITIES, cardQuantities);
+    console.log(`Quantity updated for ${cardId}: ${quantity}`);
+    return true;
 }

@@ -1,51 +1,92 @@
-// Cards/js/observer.js
-import { drawCards } from "./render.js";
-import { getCurrentIndex, filteredCards } from "./data.js";
+/**
+ * Manages the Intersection Observer for infinite scrolling.
+ */
+import { renderCards } from './render.js'; // Import render function
+import { hasMoreCards } from './data.js'; // Import check for more cards
 
-let observerInstance = null; // Keep track of the observer instance
+// --- DOM Elements ---
+const loadingSentinel = document.getElementById('loadingSentinel');
+
+// --- Observer Instance ---
+let observer = null;
+let isObserving = false;
+
+// --- Observer Callback ---
 
 /**
- * Sets up the IntersectionObserver for infinite scrolling.
+ * Callback function executed when the sentinel element's intersection changes.
+ * @param {IntersectionObserverEntry[]} entries - Array of intersection entries.
+ * @param {IntersectionObserver} obs - The observer instance.
  */
-export function setupObserver() {
-  const sentinel = document.getElementById("loadingSentinel");
-  const loadingStatus = document.getElementById("loadingStatus");
+function handleIntersection(entries, obs) {
+    entries.forEach(entry => {
+        // Check if the sentinel is intersecting and there are more cards to load
+        if (entry.isIntersecting && hasMoreCards()) {
+            console.log("Loading sentinel visible, rendering next batch...");
+            // Temporarily unobserve to prevent multiple triggers while loading
+            // obs.unobserve(entry.target); // -> Let's not unobserve, renderCards handles observer state now
 
-  if (!sentinel || !loadingStatus) {
-    console.warn("⚠️ Loading sentinel or status element not found. Cannot set up observer.");
-    return;
-  }
+            renderCards(); // Load and render the next batch of cards
 
-  // Disconnect previous observer if it exists
-  if (observerInstance) {
-    observerInstance.disconnect();
-    console.log("🔌 Disconnected previous IntersectionObserver.");
-  }
+            // Re-observe after rendering (renderCards now handles observer logic)
+            // if (hasMoreCards()) {
+            //     obs.observe(entry.target);
+            // }
+        } else if (!hasMoreCards()) {
+             // If no more cards, disconnect the observer permanently
+             console.log("No more cards, disconnecting observer.");
+             disconnectObserver();
+        }
+    });
+}
 
-  const options = {
-    root: null, // Use the viewport as the root
-    rootMargin: '0px',
-    threshold: 0.1 // Trigger when 10% of the sentinel is visible
-  };
+// --- Public Observer Control Functions ---
 
-  observerInstance = new IntersectionObserver((entries) => {
-    const entry = entries[0];
-    if (entry.isIntersecting) {
-      const currentIdx = getCurrentIndex();
-      if (currentIdx < filteredCards.length) {
-        loadingStatus.textContent = "Loading more cards...";
-        // Use requestAnimationFrame for potentially smoother loading trigger
-        requestAnimationFrame(() => {
-            drawCards(); // Load the next batch
-        });
-      } else {
-        loadingStatus.textContent = "All cards loaded.";
-        observerInstance?.disconnect(); // No more cards to load
-        console.log("🏁 All cards loaded, observer disconnected.");
-      }
+/**
+ * Initializes and starts the Intersection Observer.
+ */
+export function initializeObserver() {
+    if (!loadingSentinel) {
+        console.warn("Loading sentinel element not found. Infinite scroll disabled.");
+        return;
     }
-  }, options);
 
-  observerInstance.observe(sentinel);
-  console.log("👀 IntersectionObserver set up.");
+    if (observer) {
+        observer.disconnect(); // Disconnect previous observer if any
+    }
+
+    // Create a new observer instance
+    observer = new IntersectionObserver(handleIntersection, {
+        root: null, // Use the viewport as the root
+        rootMargin: '0px', // No margin
+        threshold: 0.1 // Trigger when 10% of the sentinel is visible
+    });
+
+    // Start observing the sentinel
+    observeSentinel();
+     console.log("Intersection Observer initialized.");
+}
+
+/**
+ * Starts observing the sentinel element.
+ */
+export function observeSentinel() {
+    if (observer && loadingSentinel && !isObserving) {
+        observer.observe(loadingSentinel);
+        isObserving = true;
+        console.log("Observer started observing sentinel.");
+    }
+}
+
+
+/**
+ * Stops observing the sentinel element and disconnects the observer.
+ */
+export function disconnectObserver() {
+    if (observer) {
+        observer.disconnect();
+        isObserving = false;
+         console.log("Intersection Observer disconnected.");
+    }
+     // No need to nullify observer here, initializeObserver handles recreation
 }

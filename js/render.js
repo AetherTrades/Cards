@@ -1,214 +1,191 @@
-// Cards/js/render.js
-import { cardsPerBatch, filteredCards, getCurrentIndex, incrementIndex, isFavorite } from './data.js';
+// js/render.js
+// Handles rendering cards to the DOM, including infinite scroll logic
+// and updating UI elements like card counts.
 
-// DOM Elements
-const cardList = document.getElementById("cardContainer");
-const countElement = document.getElementById("cardCount");
+import { getNextBatch, hasMoreCards, getFilteredCount, getQuantity } from './data.js';
+import { disconnectObserver, observeSentinel } from './observer.js';
 
-// Constants
-const PLACEHOLDER_IMG = "https://placehold.co/630x880/333/ccc?text=No+Image"; // Placeholder image URL
-const MY_PRICE_MULTIPLIER = 0.85; // Example: Your price is 85% of market
+// --- DOM Elements ---
+const cardContainer = document.getElementById('cardContainer');
+const cardCountElement = document.getElementById('cardCount');
+const loadingSentinel = document.getElementById('loadingSentinel');
+const loadingStatusElement = document.getElementById('loadingStatus');
+const loadingIndicator = document.getElementById('loadingIndicator');
 
-/**
- * Maps rarity strings to corresponding CSS classes for border/glow effects.
- * @param {string} rarity - The card rarity (lowercase).
- * @returns {string} - CSS class string defined in styles.css.
- */
-function getRarityClasses(rarity = 'common') {
-  const rarityMap = {
-    common: 'card-glow-common',
-    uncommon: 'card-glow-uncommon',
-    rare: 'card-glow-rare',
-    mythic: 'card-glow-mythic',
-    special: 'card-glow-mythic', // Treat special like mythic for glow
-    default: 'card-glow-default' // Fallback
-  };
-  return rarityMap[rarity.toLowerCase()] || rarityMap.default;
-}
+// --- Constants ---
+const PLACEHOLDER_IMAGE_URL = 'https://placehold.co/630x880/374151/9ca3af?text=Loading...';
+
+// --- Private Helper Functions ---
 
 /**
- * Creates a styled tag element (e.g., for Foil, Promo).
- * Uses Tailwind classes for styling.
- * @param {string} label - The text label for the tag.
- * @param {string} colorName - A key corresponding to Tailwind color classes (e.g., 'blue', 'purple').
- * @returns {HTMLSpanElement} - The styled span element.
+ * Creates the HTML element for a single card.
+ * @param {object} card - The card data object.
+ * @returns {HTMLElement} The card element.
  */
-function makeTag(label, colorName) {
-  const colorClasses = {
-    blue: 'bg-blue-900 text-blue-300 border border-blue-700',
-    purple: 'bg-purple-900 text-purple-300 border border-purple-700',
-    pink: 'bg-pink-900 text-pink-300 border border-pink-700',
-    yellow: 'bg-yellow-900 text-yellow-300 border border-yellow-700',
-    default: 'bg-gray-700 text-gray-300 border border-gray-600'
-  };
-  const tagColor = colorClasses[colorName] || colorClasses.default;
-  const span = document.createElement("span");
-  span.textContent = label;
-  span.className = `${tagColor} px-2 py-0.5 rounded-full shadow text-xs font-medium`;
-  return span;
-}
+function createCardElement(card) {
+    const cardElement = document.createElement('div');
+    cardElement.classList.add(
+        'card', 'bg-gray-800', 'border', 'border-gray-700', 'rounded-lg',
+        'shadow-md', 'overflow-hidden', 'transition-all', 'duration-200', 'ease-in-out'
+    );
+    const rarityDisplay = card.rarity || 'unknown';
+    // Rarity class removed from card element, added to span below
+    cardElement.dataset.cardId = card.id;
 
-/**
- * Renders a batch of cards to the DOM based on the current filter/sort state.
- * @param {boolean} [reset=false] - If true, clears the existing cards before rendering.
- */
-export function drawCards(reset = false) {
-  if (!cardList) {
-    console.error("❌ Card container element (#cardContainer) not found.");
-    return;
+    // State classes
+    if (card.isFavorite) cardElement.classList.add('is-favorite');
+    if (card.isIgnored) cardElement.classList.add('is-ignored');
+
+    // --- NEW: Add specific foil class ---
+    if (card.isFoil) {
+        cardElement.classList.add('is-foil-card');
+    }
+    // --- End NEW ---
+
+    // --- Data Preparation ---
+    let currentQuantity = getQuantity(card.id);
+    const originalQuantity = card.quantity;
+    if (isNaN(currentQuantity) || currentQuantity === null || currentQuantity === undefined) {
+        currentQuantity = 0;
+    }
+    const marketPrice = card.marketPrice ?? card.prices?.usd ?? null;
+    const myPrice = card.myPrice ?? null;
+    const setCodeDisplay = card.set ? card.set.toUpperCase() : 'N/A';
+    const collectorNumberDisplay = card.collectorNumber ?? '';
+    const cardNameDisplay = card.name || 'Unknown Card';
+    const setNameDisplay = card.setName || '';
+
+    // Build Tags HTML
+    let tagsHtml = '<div class="card-tags">';
+    if (card.isFoil) tagsHtml += '<span class="card-tag tag-foil">Foil</span>';
+    if (card.isEtched) tagsHtml += '<span class="card-tag tag-etched">Etched</span>';
+    if (card.isPromo) tagsHtml += '<span class="card-tag tag-promo">Promo</span>';
+    if (card.isToken) tagsHtml += '<span class="card-tag tag-token">Token</span>';
+    tagsHtml += '</div>';
+
+    let priceHtml = `
+    <div class="card-price text-sm mb-2 flex flex-row gap-4 items-center justify-center">
+  `;
+  
+  // If Market price
+  if (marketPrice !== null) {
+    priceHtml += `
+      <div class="price-market-container inline-flex items-center">
+        <span class="price-label text-xs text-gray-500 mr-1">Market: </span>
+        <span class="price-market text-gray-500 line-through">$${marketPrice.toFixed(2)}</span>
+      </div>
+    `;
   }
-
-  if (reset) {
-    cardList.innerHTML = "";
+  
+  // If My Price
+  if (myPrice !== null) {
+    priceHtml += `
+      <div class="price-my-container inline-flex items-center">
+        <span class="price-label text-xs text-green-600 mr-1">My Price: </span>
+        <span class="price-my font-semibold text-green-400">$${myPrice.toFixed(2)}</span>
+      </div>
+    `;
+  } else if (marketPrice === null) {
+    // No price at all
+    priceHtml += `<span class="text-xs text-gray-500">No price data</span>`;
   }
+  
+  priceHtml += '</div>';
+  
 
-  if (countElement) {
-    countElement.textContent = `Showing ${filteredCards.length} cards`;
-  }
+    // --- Final Card HTML ---
+    cardElement.innerHTML = `
+        <div class="card-image-container"> {/* Removed has-foil-overlay class here */}
+            <img src="${card.imageUrl || PLACEHOLDER_IMAGE_URL}"
+                 alt="${cardNameDisplay}"
+                 class="card-image w-full h-auto aspect-[63/88] block bg-gray-700"
+                 loading="lazy"
+                 onerror="this.onerror=null; this.src='${PLACEHOLDER_IMAGE_URL}'; this.classList.add('img-error');"
+            >
+            ${tagsHtml}
+        </div>
+        <div class="card-content p-3">
+            <h3 class="card-name font-semibold text-sm text-gray-100 mb-0 truncate" title="${cardNameDisplay}">${cardNameDisplay}</h3>
+            <p class="card-set-name text-xs italic text-gray-400 mb-1" title="${setNameDisplay}">${setNameDisplay}</p>
+            <div class="card-info text-xs text-gray-400 mb-2 flex justify-between items-center">
+                <span class="card-set truncate" title="${setNameDisplay}">${setCodeDisplay} #${collectorNumberDisplay}</span>
+                <span class="card-rarity font-medium capitalize rarity-${rarityDisplay}">${rarityDisplay}</span>
+            </div>
+            ${priceHtml}
+            <div class="quantity-controls flex items-center justify-center gap-2 mt-1">
+                <button class="quantity-decrease bg-gray-600 hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full w-6 h-6 flex items-center justify-center font-bold text-lg leading-none transition" ${currentQuantity <= 1 ? 'disabled' : ''}>-</button>
+                <span class="quantity-display font-medium text-gray-200 text-sm min-w-[1.5rem] text-center">
+                    ${currentQuantity} / ${card.quantity}
+                </span>
 
-  const start = getCurrentIndex();
-  const batch = filteredCards.slice(start, start + cardsPerBatch);
-  const fragment = document.createDocumentFragment();
-
-  for (const card of batch) {
-    const scry = card.scryfall || {};
-    const foilType = (card.Foil || "normal").toLowerCase();
-    const isPromo = scry.promo === true || String(card.Promos).toUpperCase() === "TRUE";
-    const isFoil = foilType === "foil" || foilType === "etched" || isPromo;
-    const isToken = scry.layout === "token" || String(card.Type).toLowerCase().includes("token");
-    const cardId = card['Scryfall ID'];
-    const rarity = (scry.rarity || card.Rarity || 'common').toLowerCase();
-
-    // Create the card wrapper and set classes
-    const wrapper = document.createElement("div");
-    wrapper.className = `card-base ${getRarityClasses(rarity)}`;
-    wrapper.dataset.cardId = cardId;
-
-    // Create favorite button
-    const favButton = document.createElement("button");
-    favButton.className = `favorite-button ${isFavorite(cardId) ? 'favorited' : ''}`;
-    favButton.dataset.cardId = cardId;
-    favButton.setAttribute('aria-label', 'Favorite this card');
-    favButton.innerHTML = `
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-        <path fill-rule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354l-4.757 2.827c-.996.608-2.231-.29-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.005Z" clip-rule="evenodd" />
-      </svg>
+                <button class="quantity-increase bg-gray-600 hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-full w-6 h-6 flex items-center justify-center font-bold text-lg leading-none transition" ${currentQuantity >= originalQuantity ? 'disabled' : ''}>+</button>
+            </div>
+        </div>
     `;
 
-    // Create image wrapper and image element
-    const imgWrap = document.createElement("div");
-    imgWrap.className = `card-image-wrapper ${isFoil ? "foil" : ""}`;
-    const img = document.createElement("img");
-    img.alt = card.Name || "Card Image";
-    img.title = card.Name || "Card Image";
-    img.loading = "lazy";
-    img.src = scry.imgUrl || PLACEHOLDER_IMG;
-    img.onerror = () => {
-      img.src = PLACEHOLDER_IMG;
-      img.alt = "Image not found";
-      console.warn(`Failed to load image for ${card.Name || cardId}: ${scry.imgUrl}`);
-    };
-    imgWrap.appendChild(img);
+    // Attach quantity button listeners
+    const decreaseBtn = cardElement.querySelector('.quantity-decrease');
+    const increaseBtn = cardElement.querySelector('.quantity-increase');
+    const quantityDisplay = cardElement.querySelector('.quantity-display');
 
-    // Create card details section
-    const detailsDiv = document.createElement('div');
-    detailsDiv.className = 'card-details';
+    decreaseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        let qty = getQuantity(card.id);
+        if (isNaN(qty) || qty === null || qty === undefined) qty = 0;
+        if (qty > 1) {
+            const newQuantity = qty - 1;
+             import('./data.js').then(dataModule => {
+                 if (dataModule.updateQuantity(card.id, newQuantity)) {
+                    quantityDisplay.textContent = `${newQuantity} / ${card.quantity}`;
+                    decreaseBtn.disabled = newQuantity <= 0;
+                     const oQty = card.quantity;
+                     increaseBtn.disabled = newQuantity >= oQty;
+                     if(dataModule.isFavorite(card.id)) {
+                         import('./menu.js').then(menuModule => menuModule.updateMenuFavorites());
+                     }
+                 }
+             });
+        }
+    });
 
-    // --- Info Group (Name, [Foil Tag], Type, Set, Quantity) ---
-    const infoGroup = document.createElement("div");
-    infoGroup.className = 'mb-2 text-center'; // Added margin-bottom
+    increaseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        let qty = getQuantity(card.id);
+        if (isNaN(qty) || qty === null || qty === undefined) qty = 0;
+        const oQty = card.quantity;
+        if (qty < oQty) {
+            const newQuantity = qty + 1;
+            import('./data.js').then(dataModule => {
+                if (dataModule.updateQuantity(card.id, newQuantity)) {
+                    quantityDisplay.textContent = `${newQuantity} / ${card.quantity}`;
+                    decreaseBtn.disabled = false;
+                    increaseBtn.disabled = newQuantity >= oQty;
+                    if(dataModule.isFavorite(card.id)) {
+                        import('./menu.js').then(menuModule => menuModule.updateMenuFavorites());
+                    }
+                }
+            });
+        }
+    });
 
-    // Card Name
-    const nameContainer = document.createElement("div");
-    nameContainer.className = "flex justify-center items-center gap-1";
-
-    const name = document.createElement("div");
-    name.className = "font-semibold text-sm truncate w-full text-gray-100";
-    name.textContent = card.Name || 'Unnamed Card';
-    nameContainer.appendChild(name);
-    infoGroup.appendChild(nameContainer);
-
-       // Card Type Line with tooltip for oracle text
-    const typeLine = document.createElement("div");
-    typeLine.className = "text-xs text-gray-400 italic truncate w-full tooltip";
-    typeLine.textContent = scry.type_line || card.Type || "";
-    const oracleText = scry.oracle_text || card.Oracle || 'No oracle text available.';
-    const tooltipSpan = document.createElement('span');
-    tooltipSpan.className = 'tooltip-text';
-    tooltipSpan.textContent = oracleText;
-    typeLine.appendChild(tooltipSpan);
-
-    // Set Name and Code
-    const metaSet = document.createElement("div");
-    metaSet.className = "text-xs text-gray-500";
-    metaSet.textContent = scry.set_name
-      ? `${scry.set_name} (${(card["Set code"] || scry.set)?.toUpperCase() || 'N/A'})`
-      : (card["Set name"] || "");
-
-      // Quantity Display
-    const quantityDiv = document.createElement("div");
-    quantityDiv.className = "text-xs text-gray-500";
-    quantityDiv.textContent = `Quantity: ${card.Quantity || 1}`;
-
-      //Foil Name Tag
-    const tagWrapper = document.createElement("div");
-    tagWrapper.className = "flex justify-center mt-1";
-    if (foilType === "foil") {
-      const foilNameTag = makeTag("Foil", "blue");
-      tagWrapper.appendChild(foilNameTag);
-    }
-    if (foilType === "etched") {
-      const foilNameTag = makeTag("Etched", "purple");
-      tagWrapper.appendChild(foilNameTag);
-    }
-    if (isPromo && foilType !== "etched") {
-       const promoNameTag = makeTag("Promo", "pink");
-      tagWrapper.appendChild(promoNameTag);
-    }
-     if (isToken){
-        const tokenNameTag = makeTag("Token", "yellow");
-        tagWrapper.appendChild(tokenNameTag);
-    }
-
-
-
-    infoGroup.append(typeLine, metaSet, quantityDiv,tagWrapper);
-
-    // --- Pricing Section ---
-    const priceBox = document.createElement("div");
-    priceBox.className = "flex justify-around items-center gap-2 text-sm font-medium my-2 w-full max-w-[90%] mx-auto bg-gradient-to-b from-gray-800/30 to-gray-900/30 rounded-md py-1.5 px-2 shadow-inner";
-    const marketPriceNum = parseFloat(card.marketPrice || card["Purchase price"] || "0");
-    const myPriceNum = parseFloat(card.myPrice || (marketPriceNum * MY_PRICE_MULTIPLIER));
-    const myTag = document.createElement("div");
-    myTag.className = "price-fade text-center";
-    myTag.innerHTML = `<div class='text-green-500 text-[10px] leading-tight uppercase font-medium'>My Price</div><div class='text-sm font-bold text-green-400'>$${myPriceNum.toFixed(2)}</div>`;
-    const marketTag = document.createElement("div");
-    marketTag.className = "price-fade text-center";
-    marketTag.innerHTML = `<div class='text-gray-400 text-[10px] leading-tight uppercase font-medium'>Market</div><div class='text-sm font-bold text-gray-300'>$${marketPriceNum.toFixed(2)}</div>`;
-    priceBox.append(myTag, marketTag);
-
-    // --- Tags Section for remaining tags ---
-    const tagWrap = document.createElement("div");
-    tagWrap.className = "flex flex-wrap justify-center items-center gap-1.5 min-h-[24px] mt-1 w-full";
-    // Note: Since foil tag is already placed under the name, we exclude it here.
-
-    // If you also want the token tag here, remove the following condition
-    //if (!isToken) tagWrap.append(makeTag("Token", "yellow"));
-
-    // Assemble card details
-    detailsDiv.append(infoGroup, priceBox, tagWrap);
-
-    // Assemble final card element
-    wrapper.append(imgWrap, favButton, detailsDiv);
-    fragment.appendChild(wrapper);
-
-    // Trigger price fade-in animation
-    setTimeout(() => {
-      myTag.classList.add("show");
-      marketTag.classList.add("show");
-    }, 50);
-  }
-
-  cardList.appendChild(fragment);
-  incrementIndex();
+    return cardElement;
 }
+
+// --- Rest of render.js ---
+// (updateCardCount, updateLoadingStatus, clearCardContainer, renderCards, etc.
+// remain the same as the previous version provided in the chat)
+
+/** Updates the displayed card count. */
+function updateCardCount() { if (cardCountElement) cardCountElement.textContent = `Showing ${getFilteredCount().toLocaleString()} cards`; }
+/** Updates the loading status message. */
+function updateLoadingStatus(status) { if (!loadingStatusElement || !loadingSentinel) return; switch(status) { case 'loading': loadingStatusElement.textContent = 'Loading more cards...'; loadingSentinel.classList.remove('hidden'); break; case 'no more': loadingStatusElement.textContent = 'All matching cards displayed.'; loadingSentinel.classList.remove('hidden'); break; case 'no match': loadingStatusElement.textContent = 'No cards match the current filters.'; loadingSentinel.classList.remove('hidden'); break; default: loadingSentinel.classList.add('hidden'); } }
+/** Clears all cards from the container. */
+export function clearCardContainer() { if (cardContainer) cardContainer.innerHTML = ''; updateCardCount(); updateLoadingStatus(''); }
+/** Renders the next batch of cards based on the current index. */
+export function renderCards(batchSize) { if (!cardContainer) return; console.log(`Rendering next batch of cards...`); const cardsToRender = getNextBatch(batchSize); if (cardsToRender.length === 0 && cardContainer.children.length === 0) { updateLoadingStatus('no match'); disconnectObserver(); updateCardCount(); return; } const fragment = document.createDocumentFragment(); cardsToRender.forEach(card => { if (!card || !card.id || !card.name) { console.warn('Skipping rendering of invalid/incomplete card data:', card); return; } try { const cardElement = createCardElement(card); fragment.appendChild(cardElement); } catch (error) { console.error('Error creating card element for card:', card, error); } }); cardContainer.appendChild(fragment); updateCardCount(); if (hasMoreCards()) { updateLoadingStatus('loading'); observeSentinel(); } else { console.log("All filtered cards have been rendered."); updateLoadingStatus('no more'); disconnectObserver(); } }
+/** Shows the main loading indicator (usually during initial load). */
+export function showLoading() { if (loadingIndicator) loadingIndicator.classList.remove('hidden'); }
+/** Hides the main loading indicator. */
+export function hideLoading() { if (loadingIndicator) loadingIndicator.classList.add('hidden'); }
+/** Shows a specific message in the loading status area and stops the observer. */
+export function showNoMoreCardsMessage(message = 'All matching cards displayed.') { updateLoadingStatus(message === 'No cards match the current filters.' ? 'no match' : 'no more'); disconnectObserver(); }

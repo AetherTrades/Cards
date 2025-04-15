@@ -1,207 +1,135 @@
 /* styles.css */
 
-/* --- Configuration / Variables --- */
 :root {
-  --glow-common: #b0b0b0;
-  --glow-uncommon: #2ca04a;
-  --glow-rare: #dab53e;
-  --glow-mythic: #e66a1e;
-  --glow-default: #888888;
-  --favorite-star-inactive: #f3f3f3; /* White-ish */
-  --favorite-star-active: #facc15;   /* yellow-400 */
-  --favorite-star-hover: #fde047;  /* yellow-300 */
+  /* Glows */
+  --glow-common: rgba(156, 163, 175, 0.7);
+  --glow-uncommon: rgba(167, 139, 250, 0.7);
+  --glow-rare: rgba(250, 204, 21, 0.8);
+  --glow-mythic: rgba(249, 115, 22, 0.9);
+  --glow-special: rgba(236, 72, 153, 0.7);
+  --glow-bonus: rgba(59, 130, 246, 0.7);
+  /* Shadows */
+  --shadow-favorite: 0 0 15px 5px rgba(250, 204, 21, 0.4);
+  --shadow-ignored: 0 0 15px 5px rgba(107, 114, 128, 0.4);
+  /* --- NEW: Rainbow Foil Gradient --- */
+  --rainbow-foil-gradient: repeating-linear-gradient(
+    120deg,
+    rgba(255, 0, 0, 0.5) 0%,
+    rgba(255, 165, 0, 0.5) 10%,
+    rgba(255, 255, 0, 0.4) 20%,
+    rgba(0, 128, 0, 0.4) 30%,
+    rgba(0, 0, 255, 0.5) 40%,
+    rgba(75, 0, 130, 0.5) 50%,
+    rgba(238, 130, 238, 0.5) 60%,
+    rgba(255, 0, 0, 0.5) 70%
+);
+  /* --- End NEW --- */
 }
 
-/* --- General Body & Layout --- */
-body {
-  scroll-behavior: smooth;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-}
+/* Base card styling */
+.card { position: relative; overflow: hidden; cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-drag: none; transition: transform 0.3s ease-out, opacity 0.3s ease-out, box-shadow 0.3s ease-in-out, border-color 0.3s ease-in-out; }
+.card:active { cursor: grabbing; }
 
-/* --- Card Container Grid --- */
-/* Responsive grid handled by Tailwind in index.html */
+/* Card Image container */
+.card-image-container { position: relative; display: block; line-height: 0; border-radius: 0.5rem; overflow: hidden; }
+.card-image { display: block; width: 100%; height: auto; transition: filter 0.3s ease-in-out; /* Add transition for filter */ }
+.img-error { filter: grayscale(80%); }
 
-
-/* --- Card Styling --- */
-.card-base {
-  /* Explicitly set position relative here to act as anchor for the absolute favorite button */
-  position: relative;
-  @apply rounded-xl shadow-lg m- p-3 flex flex-col items-center w-full min-h-[450px] transition-transform duration-200 hover:-translate-y-1 border-4 bg-[#1f1f1f] overflow-hidden;
-}
-
-/* Rarity Glow Border & Shadow */
-.card-glow-common { border-color: var(--glow-common); box-shadow: 0 0 8px 1px var(--glow-common); }
-.card-glow-uncommon { border-color: var(--glow-uncommon); box-shadow: 0 0 8px 1px var(--glow-uncommon); }
-.card-glow-rare { border-color: var(--glow-rare); box-shadow: 0 0 8px 1px var(--glow-rare); }
-.card-glow-mythic { border-color: var(--glow-mythic); box-shadow: 0 0 8px 1px var(--glow-mythic); }
-.card-glow-default { border-color: var(--glow-default); }
-
-/* --- Card Image & Static Foil Effect --- */
-.card-image-wrapper {
-  position: relative;
-  display: block;
-  width: 100%;
-  aspect-ratio: 63 / 88;
-  margin-bottom: 0.5rem;
-  overflow: hidden;
-  border-radius: 0.375rem;
-}
-
-.card-image-wrapper img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-  transition: transform 0.3s ease-out;
-  position: relative;
-  z-index: 1; /* Below favorite button and foil effect */
-}
-
-.card-image-wrapper:hover img {
-    transform: scale(1.03);
-}
-
-/* Refined & Animated Static Foil Effect */
-.card-image-wrapper.foil::before {
+/* --- UPDATED: Foil Overlay --- */
+.card-image-container::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    130deg,
-    rgba(255, 255, 255, 0.15) 20%,
-    rgba(180, 180, 255, 0.22) 35%,
-    rgba(150, 255, 150, 0.28) 50%,
-    rgba(255, 180, 180, 0.22) 65%,
-    rgba(255, 255, 255, 0.15) 80%
-  );
-  /* Increase background size for movement without repeating too obviously */
-  background-size: 200% 200%;
-  background-position: left center;
-  z-index: 2;
+  background: var(--rainbow-foil-gradient); /* Use rainbow gradient */
+  background-size: 300% 300%; /* Larger size for smoother animation */
+  opacity: 0; /* Hidden by default */
   pointer-events: none;
-  mix-blend-mode: color-dodge;
-  opacity: 0.9;
-  border-radius: inherit;
-  animation: foilMove 8s ease-in-out infinite;
+  transition: opacity 0.4s ease-in-out;
+  animation: foil-rainbow-shine 6s infinite linear; /* Slower animation */
+  mix-blend-mode: overlay; /* Try color-dodge or overlay */
+}
+/* Activate overlay only for .is-foil-card */
+.is-foil-card .card-image-container::after {
+  opacity: 0.65; /* Adjust opacity for desired intensity */
+}
+/* Optional: Enhance image itself when foil */
+.is-foil-card .card-image {
+  filter: saturate(1.2) contrast(1.05);
 }
 
-@keyframes foilMove {
-  0% {
-    background-position: left center;
-  }
-  50% {
-    background-position: right center;
-  }
-  100% {
-    background-position: left center;
-  }
+@keyframes foil-rainbow-shine {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
+/* --- End UPDATED --- */
 
 
+/* Finish/Type Tags */
+.card-tags { position: absolute; top: 0.5rem; right: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; z-index: 5; }
+.card-tag { display: inline-block; padding: 0.15rem 0.4rem; font-size: 0.65rem; font-weight: 600; border-radius: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.5); }
+.tag-foil { background-color: rgba(0, 119, 255, 0.8); border: 1px solid rgba(128, 191, 255, 0.7); }
+.tag-etched { background-color: rgba(139, 69, 19, 0.8); border: 1px solid rgba(160, 82, 45, 0.7); }
+.tag-promo { background-color: rgba(217, 119, 6, 0.8); border: 1px solid rgba(245, 158, 11, 0.7); }
+.tag-token { background-color: rgba(107, 114, 128, 0.8); border: 1px solid rgba(156, 163, 175, 0.7); }
 
+/* Rarity Text Glow */
+.card-rarity { text-shadow: 0 0 6px var(--glow-common); }
+.card-rarity.rarity-common { text-shadow: 0 0 6px var(--glow-common), 0 0 8px var(--glow-common); color: #e5e7eb; }
+.card-rarity.rarity-uncommon { text-shadow: 0 0 6px var(--glow-uncommon), 0 0 8px var(--glow-uncommon); color: #c4b5fd; }
+.card-rarity.rarity-rare { text-shadow: 0 0 7px var(--glow-rare), 0 0 10px var(--glow-rare); color: #fde047; }
+.card-rarity.rarity-mythic { text-shadow: 0 0 8px var(--glow-mythic), 0 0 12px var(--glow-mythic); color: #fb923c; }
+.card-rarity.rarity-special { text-shadow: 0 0 7px var(--glow-special), 0 0 10px var(--glow-special); color: #f9a8d4; }
+.card-rarity.rarity-bonus { text-shadow: 0 0 7px var(--glow-bonus), 0 0 10px var(--glow-bonus); color: #93c5fd; }
+.card-rarity.rarity-unknown { text-shadow: none; color: #9ca3af; }
 
-/* --- Price Fade Effect --- */
-.price-fade {
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+/* Italic Set Name */
+.card-set-name { font-style: italic; }
+
+/* Price Styling */
+.price-market { text-decoration: line-through; }
+
+/* Favorite/Ignored Visuals */
+.card.is-favorite { border-color: rgba(250, 204, 21, 0.6) !important; box-shadow: var(--shadow-favorite); }
+.card.is-ignored { opacity: 0.5; box-shadow: none !important; border-color: #4b5563 !important; }
+/* Card Removal Animation */
+.card.is-removing { transition: transform 0.3s ease-in, opacity 0.3s ease-in; transform: scale(0.8); opacity: 0; }
+
+/* Swipe Animation Styles */
+.swipe-particle { position: absolute; pointer-events: none; z-index: 101; opacity: 1; will-change: transform, opacity; }
+.star-particle { color: #facc15; font-size: 1.5rem; text-shadow: 0 0 5px rgba(250, 204, 21, 0.7); transform: translate(-50%, -50%); }
+.trash-particle { color: #9ca3af; font-size: 1.2rem; transform: translate(-50%, -50%); }
+
+/* Menu Styles */
+#menuPanel { display: flex; flex-direction: column; }
+#menuFavList { flex-grow: 1; overflow-y: auto; }
+.favorite-item { display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid #374151; font-size: 0.75rem; }
+.favorite-item:last-child { border-bottom: none; }
+.favorite-item-name { flex-grow: 1; margin-right: 0.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d1d5db; }
+.favorite-item-quantity { color: #9ca3af; margin-left: 0.25rem; }
+.favorite-item-price { font-weight: 500; color: #a7f3d0; min-width: 45px; text-align: right; }
+.favorite-item-remove { background: none; border: none; color: #f87171; font-size: 1rem; line-height: 1; padding: 0 0 0 0.5rem; cursor: pointer; transition: color 0.2s ease; }
+.favorite-item-remove:hover { color: #ef4444; }
+
+/* Collapsible Filter Section */
+.collapsible-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.4s ease-out;
+  /* Padding moved to inner div in HTML to prevent clipping */
 }
-.price-fade.show {
-  opacity: 1;
-  transform: translateY(0);
+.collapsible-content.is-open {
+  max-height: 1000px; /* Adjust if needed */
+  transition: max-height 0.5s ease-in;
 }
+/* Arrow rotation */
+#toggleFiltersBtn #toggleFiltersArrow { transition: transform 0.3s ease-in-out; }
+#toggleFiltersBtn.is-open #toggleFiltersArrow { transform: rotate(180deg); }
 
-/* --- Back to Top Button --- */
-#backToTopBtn { z-index: 50; }
+/* Fixed Search Bar Styles */
+/* Styles applied via Tailwind */
 
-/* --- Favorite Button Styling --- */
-.favorite-button {
-  position: absolute; /* Position is relative to the nearest positioned ancestor (now .card-base) */
-  top: 8px;
-  right: 8px;
-  background: rgba(0, 0, 0, 0.4);
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  padding: 5px;
-  z-index: 20; /* Ensure it's above image/foil */
-  color: var(--favorite-star-inactive);
-  /* Removed 'color' from transition, kept transform and background-color */
-  transition: transform 0.2s ease-in-out, background-color 0.2s ease-in-out;
-  line-height: 0;
-  opacity: 1;
-  visibility: visible;
-}
-
-.favorite-button:hover {
-  color: var(--favorite-star-hover); /* Still change color instantly on hover */
-  background-color: rgba(0, 0, 0, 0.6);
-  transform: scale(1.1);
-}
-
-.favorite-button.favorited {
-  color: var(--favorite-star-active); /* Instantly changes to yellow */
-  background-color: rgba(228, 228, 228, 0.5);
-}
-
-.favorite-button svg {
-  width: 20px;
-  height: 20px;
-  fill: currentColor; /* SVG color inherits from button's color */
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
-  vertical-align: middle;
-  /* Explicitly disable transitions on the SVG's fill property */
-  transition: none; /* <<< ADDED THIS LINE */
-}
-
-/* --- Tooltip for Oracle Text --- */
-.tooltip {
-  position: relative;
-  cursor: help;
-}
-
-.tooltip .tooltip-text {
-  visibility: hidden;
-  width: 250px;
-  background-color: #2a2a2a;
-  color: #fff;
-  text-align: left;
-  font-size: 0.75rem;
-  font-style: normal;
-  border-radius: 6px;
-  padding: 8px;
-  position: absolute;
-  z-index: 100; /* High z-index for tooltip */
-  bottom: 125%;
-  left: 50%;
-  margin-left: -125px;
-  opacity: 0;
-  transition: opacity 0.3s;
-  white-space: pre-wrap;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-  max-height: 200px;
-  overflow-y: auto;
-  pointer-events: none;
-}
-
-.tooltip .tooltip-text::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  margin-left: -5px;
-  border-width: 5px;
-  border-style: solid;
-  border-color: #2a2a2a transparent transparent transparent;
-}
-
-.tooltip:hover .tooltip-text {
-  visibility: visible;
-  opacity: 1;
-}
-
-/* --- Import/Export Button Styles --- */
-.action-button {
-  @apply px-3 py-1.5 bg-gray-700 text-white text-xs rounded hover:bg-gray-600 transition disabled:opacity-50 disabled:cursor-not-allowed shadow;
-}
+/* Utility */
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+button:disabled { opacity: 0.6; cursor: not-allowed; }

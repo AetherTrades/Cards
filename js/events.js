@@ -1,255 +1,445 @@
-// Cards/js/events.js
-import { filterCards, applySort } from "./search.js"; // Filter/sort logic
-import { resetIndex, toggleFavorite, exportFavoritesCSV, importFavoritesCSV, isFavorite, clearFavorites } from "./data.js"; // Data functions including import/export and clearFavorites
-import { drawCards } from "./render.js"; // Needed for sort dropdown handler
+// js/events.js
+// Sets up all event listeners for the application.
 
-// Debounce function (utility)
-function debounce(func, delay = 300) {
-    let timeoutId;
-    return function(...args) {
-        clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => {
-            func.apply(this, args);
-        }, delay);
-    };
+import { filterAndRenderCards } from './search.js';
+import { applySort } from './sorting.js';
+import { toggleFavorite, addIgnored, clearFavorites, clearIgnored, importFavoritesCSV, exportFavoritesCSV } from './data.js';
+import { updateMenuFavorites, openMenu, closeMenu } from './menu.js';
+import { displayError, displayInfo, debounce } from './utils.js';
+
+// --- DOM Elements ---
+const searchInput = document.getElementById('searchInput');
+const typeInput = document.getElementById('typeInput');
+const oracleInput = document.getElementById('oracleInput');
+const manaCostInput = document.getElementById('manaCostInput');
+const raritySelect = document.getElementById('raritySelect');
+const sortSelect = document.getElementById('sortSelect');
+const resetFiltersButton = document.getElementById('resetFilters'); // Bottom button
+const cardContainer = document.getElementById('cardContainer');
+
+// Menu Elements
+const menuToggleButton = document.getElementById('menuToggleBtn');
+const menuOverlay = document.getElementById('menuOverlay');
+const exportFavoritesButton = document.getElementById('exportFavorites');
+const importFavoritesInput = document.getElementById('importFavoritesInput');
+const clearFavoritesButton = document.getElementById('clearFavorites');
+const clearIgnoredTopButton = document.getElementById('clearIgnoredTopBtn'); // Top button
+const toggleFiltersButton = document.getElementById('toggleFiltersBtn');
+const filtersSortingContent = document.getElementById('filtersSortingContent');
+const swipeAnimationContainer = document.getElementById('swipe-animation-container'); // NEW animation container
+
+// --- Constants ---
+const DEBOUNCE_DELAY = 300;
+const SWIPE_THRESHOLD = 60;
+const REMOVAL_ANIMATION_DURATION = 300; // ms, should match CSS transition
+
+// --- Swipe State Variables ---
+let touchstartX = 0, touchstartY = 0, touchendX = 0, touchendY = 0;
+let isSwiping = false;
+let currentCardElement = null;
+let currentX = 0;
+let swipeStartX = 0, swipeStartY = 0; // Store precise start coords for animation origin
+
+// --- Event Handlers ---
+const debouncedFilter = debounce(filterAndRenderCards, DEBOUNCE_DELAY);
+function handleFilterChange() {
+    console.log("Filter changed, applying...");
+    debouncedFilter();
 }
 
-/**
- * Sets up all primary event listeners for the application UI.
- */
-export function setupEventListeners() {
-  console.log("✅ Setting up event listeners...");
+function handleSortChange() {
+    console.log("Sort changed, applying...");
+    applySort();
+    filterAndRenderCards();
+}
 
-  // --- Get References to DOM Elements ---
-  // Containers & Buttons
-  const cardContainer = document.getElementById("cardContainer");
-  const toggleBtn = document.getElementById("toggleAdvanced");
-  const advancedSearchDiv = document.getElementById("advancedSearch");
-  const toggleIcon = document.getElementById("toggleIcon");
-  const toggleText = document.getElementById("toggleText");
-  const resetBtn = document.getElementById("resetFilters");
-  const backToTopBtn = document.getElementById("backToTopBtn");
-  const exportBtn = document.getElementById("exportBtn");
-  const importBtn = document.getElementById("importBtn");
-  const importFileInput = document.getElementById("importFile");
-  const clearFavoritesBtn = document.getElementById("clearFavoritesBtn");
-  
-  // Filter/Sort Input Elements
-  const searchInput = document.getElementById("search");
-  const sortSelect = document.getElementById("sortSelect");
-  const typeInput = document.getElementById("typeInput");
-  const rarityInput = document.getElementById("rarityInput");
-  const oracleInput = document.getElementById("oracleInput");
-  const manaInput = document.getElementById("manaInput");
-  const foilToggle = document.getElementById("foilToggle");
-  const etchedToggle = document.getElementById("etchedToggle");
-  const promoToggle = document.getElementById("promoToggle");
-  const tokenToggle = document.getElementById("tokenToggle");
-  const favoriteToggle = document.getElementById("favoriteToggle");
-  // --- End Element References ---
+function resetFilters() {
+    console.log("Resetting filters...");
+    if (searchInput) searchInput.value = '';
+    if (typeInput) typeInput.value = '';
+    if (oracleInput) oracleInput.value = '';
+    if (manaCostInput) manaCostInput.value = '';
+    if (raritySelect) raritySelect.value = '';
+    document.querySelectorAll('.filter-toggle').forEach(toggle => {
+        if (toggle.id === 'hideIgnoredToggle')
+            toggle.checked = true;
+        else
+            toggle.checked = false;
+    });
+    if (sortSelect) sortSelect.value = 'price_desc';
+    handleFilterChange();
+    displayInfo("Filters and sort reset.");
+    closeMenu();
+    document.getElementById('menuIconHamburger')?.classList.replace('opacity-0', 'opacity-100');
+    document.getElementById('menuIconClose')?.classList.replace('opacity-100', 'opacity-0');
+}
 
-  // Debounced version of filterCards for text inputs
-  const debouncedFilterCards = debounce(filterCards, 300);
+function handleExportFavorites() {
+    const csvData = exportFavoritesCSV();
+    if (csvData) {
+        try {
+            const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            const dateStr = new Date().toISOString().slice(0, 10);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `mtg_favorites_${dateStr}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            displayInfo("Favorites exported successfully.");
+        } catch (error) {
+            console.error("Error creating download link for favorites CSV:", error);
+            displayError("Failed to initiate favorites download.", error);
+        }
+    }
+}
 
-  // --- Attach Event Listeners ---
+function handleImportFavorites(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const csvContent = e.target.result;
+        try {
+            const result = await importFavoritesCSV(csvContent);
+            displayInfo(`Import complete: ${result.importedCount} new favorites added. ${result.notFoundCount} IDs not found.`);
+            updateMenuFavorites();
+            filterAndRenderCards();
+        } catch (error) {
+            console.error("Error importing favorites:", error);
+            displayError(`Import failed: ${error.message}`, error);
+        } finally {
+            event.target.value = null;
+        }
+    };
+    reader.onerror = (e) => {
+        console.error("Error reading import file:", e);
+        displayError("Failed to read the selected file.", e);
+        event.target.value = null;
+    };
+    reader.readAsText(file);
+}
 
-  // 1. Advanced Search Toggle Button
-  if (toggleBtn && advancedSearchDiv && toggleIcon && toggleText) {
-     toggleBtn.addEventListener("click", () => {
-        const isExpanded = toggleBtn.getAttribute("aria-expanded") === "true";
-        toggleBtn.setAttribute("aria-expanded", !isExpanded);
-        if (isExpanded) {
-          // --- Collapse Logic ---
-          advancedSearchDiv.style.maxHeight = advancedSearchDiv.scrollHeight + "px";
-          requestAnimationFrame(() => {
-            advancedSearchDiv.style.maxHeight = "0";
-            advancedSearchDiv.style.paddingTop = "0";
-            advancedSearchDiv.style.paddingBottom = "0";
-            advancedSearchDiv.style.marginTop = "0";
-            advancedSearchDiv.style.marginBottom = "0";
-            // Delay setting visibility to hidden until after transition
-            advancedSearchDiv.addEventListener('transitionend', () => {
-                 if (toggleBtn.getAttribute("aria-expanded") === "false") {
-                    advancedSearchDiv.style.visibility = "hidden";
-                 }
-            }, { once: true });
-          });
-          toggleIcon.textContent = "▼";
-          toggleText.textContent = "Show Advanced Search & Options";
-        } else {
-          // --- Expand Logic ---
-          advancedSearchDiv.style.visibility = "visible";
-          advancedSearchDiv.style.paddingTop = "";
-          advancedSearchDiv.style.paddingBottom = "";
-          advancedSearchDiv.style.marginTop = "";
-          advancedSearchDiv.style.marginBottom = "";
-          advancedSearchDiv.style.maxHeight = advancedSearchDiv.scrollHeight + "px";
-          toggleIcon.textContent = "▲";
-          toggleText.textContent = "Hide Advanced Search & Options";
-          advancedSearchDiv.addEventListener('transitionend', () => {
-            if (toggleBtn.getAttribute("aria-expanded") === "true") {
-              advancedSearchDiv.style.maxHeight = 'none';
+function handleClearFavorites() {
+    clearFavorites();
+    updateMenuFavorites();
+    filterAndRenderCards();
+}
+
+function handleClearIgnored() {
+    clearIgnored();
+    filterAndRenderCards();
+} // Handles both buttons
+
+// --- NEW: Swipe Animations ---
+
+// Star Burst Animation
+function createStarBurst(x, y, count = 7) {
+    if (!swipeAnimationContainer) return;
+    for (let i = 0; i < count; i++) {
+        const star = document.createElement('div');
+        star.classList.add('swipe-particle', 'star-particle');
+        star.textContent = '★'; // Star character
+        // Initial position at the swipe point
+        star.style.left = `${x}px`;
+        star.style.top = `${y}px`;
+        star.style.transform = 'translate(-50%, -50%) scale(0.5)'; // Center and start small
+        star.style.opacity = '1';
+        swipeAnimationContainer.appendChild(star);
+        // Calculate random destination
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 40 + Math.random() * 40; // Burst distance
+        const finalX = Math.cos(angle) * distance;
+        const finalY = Math.sin(angle) * distance;
+        const finalScale = 0.8 + Math.random() * 0.4; // Random end scale
+        // Trigger animation using requestAnimationFrame for timing
+        requestAnimationFrame(() => {
+            star.style.transform = `translate(calc(-50% + ${finalX}px), calc(-50% + ${finalY}px)) scale(${finalScale})`;
+            star.style.opacity = '0';
+        });
+        // Remove star after animation
+        setTimeout(() => {
+            star.remove();
+        }, 600); // Match CSS transition duration
+    }
+}
+
+// Trash Fall Animation
+function createTrashFall(x, y, count = 5) {
+    if (!swipeAnimationContainer) return;
+    for (let i = 0; i < count; i++) {
+        const trash = document.createElement('div');
+        trash.classList.add('swipe-particle', 'trash-particle');
+        trash.textContent = '🗑️'; // Trash can emoji
+        // Initial position slightly offset horizontally for spread
+        const initialOffsetX = (Math.random() - 0.5) * 30;
+        trash.style.left = `${x + initialOffsetX}px`;
+        trash.style.top = `${y}px`;
+        trash.style.transform = 'translate(-50%, -50%) rotate(0deg)'; // Center
+        trash.style.opacity = '1';
+        swipeAnimationContainer.appendChild(trash);
+        // Calculate animation parameters
+        const fallDistance = 60 + Math.random() * 50;
+        const endRotation = (Math.random() - 0.5) * 90; // Random rotation
+        const horizontalDrift = (Math.random() - 0.5) * 20;
+        const duration = 600 + Math.random() * 200; // Slightly variable duration
+        // Apply animation styles
+        trash.style.transition = `transform ${duration}ms cubic-bezier(0.4, 0, 0.8, 0.4), opacity ${duration}ms linear`;
+        // Trigger animation
+        requestAnimationFrame(() => {
+            trash.style.transform = `translate(calc(-50% + ${horizontalDrift}px), calc(-50% + ${fallDistance}px)) rotate(${endRotation}deg)`;
+            trash.style.opacity = '0';
+        });
+        // Remove trash after animation
+        setTimeout(() => {
+            trash.remove();
+        }, duration);
+    }
+}
+
+// --- Manual Swipe Handling ---
+function handleGestureStart(clientX, clientY, target) {
+    currentCardElement = target.closest('.card');
+    if (!currentCardElement || currentCardElement.classList.contains('is-removing') || currentCardElement.style.display === 'none') {
+        currentCardElement = null;
+        return;
+    }
+    // Store exact start coords for animations
+    swipeStartX = clientX;
+    swipeStartY = clientY;
+    touchstartX = clientX;
+    touchstartY = clientY;
+    isSwiping = true;
+    currentX = 0;
+    currentCardElement.style.transition = 'none';
+    currentCardElement.style.zIndex = '50';
+    console.log("Swipe Start on:", currentCardElement.dataset.cardId);
+}
+
+function handleGestureMove(clientX, clientY) {
+    if (!isSwiping || !currentCardElement) return;
+    touchendX = clientX;
+    touchendY = clientY;
+    const deltaX = touchendX - touchstartX;
+    currentX = deltaX;
+    currentCardElement.style.transform = `translateX(${currentX}px) rotate(${deltaX / 25}deg)`;
+}
+
+function handleGestureEnd(event) {
+    if (touchendX === 0) {
+        touchendX = touchstartX;
+        touchendY = touchstartY;
+    }
+    
+    if (!isSwiping || !currentCardElement) return;
+    const deltaX = touchendX - touchstartX;
+    const deltaY = touchendY - touchstartY;
+    const cardId = currentCardElement.dataset.cardId;
+    // Use the stored start coords for animation origin
+    const animOriginX = swipeStartX;
+    const animOriginY = swipeStartY;
+    const cardToReset = currentCardElement;
+    isSwiping = false;
+    currentCardElement = null;
+    touchstartX = 0;
+    touchstartY = 0;
+    touchendX = 0;
+    touchendY = 0;
+    currentX = 0;
+    swipeStartX = 0;
+    swipeStartY = 0;
+    cardToReset.style.transition = 'transform 0.3s ease-out, opacity 0.3s ease-out';
+    cardToReset.style.zIndex = '';
+    let actionTaken = false;
+    let hideCard = false;
+    if (Math.abs(deltaX) > SWIPE_THRESHOLD && Math.abs(deltaY) < Math.abs(deltaX) * 1.5) {
+        actionTaken = true;
+        if (deltaX > 0) { // Swipe Right -> Favorite
+            console.log(`Swipe Right Action on ${cardId}`);
+            const isNowFavorite = toggleFavorite(cardId);
+            cardToReset.classList.toggle('is-favorite', isNowFavorite);
+            if (isNowFavorite) {
+                cardToReset.classList.remove('is-ignored');
+                displayInfo(`${cardToReset.querySelector('.card-name')?.textContent || 'Card'} added to favorites.`);
+                // Trigger Star Burst Animation
+                createStarBurst(animOriginX, animOriginY);
+                hideCard = true;
+            } else {
+                displayInfo(`${cardToReset.querySelector('.card-name')?.textContent || 'Card'} removed from favorites.`);
             }
-          }, { once: true });
+            updateMenuFavorites();
+        } else { // Swipe Left -> Ignore
+            console.log(`Swipe Left Action on ${cardId}`);
+            const isNowIgnored = addIgnored(cardId);
+            if (isNowIgnored) {
+                cardToReset.classList.add('is-ignored');
+                cardToReset.classList.remove('is-favorite');
+                updateMenuFavorites();
+                displayInfo(`${cardToReset.querySelector('.card-name')?.textContent || 'Card'} added to ignored list.`);
+                // Trigger Trash Fall Animation
+                createTrashFall(animOriginX, animOriginY);
+                hideCard = true;
+            } else {
+                actionTaken = false;
+            }
+        }
+    }
+    // Handle animation / removal / reset
+    if (hideCard) {
+        cardToReset.classList.add('is-removing');
+        cardToReset.addEventListener('transitionend', () => {
+            if (cardToReset) cardToReset.style.display = 'none';
+        }, { once: true });
+        setTimeout(() => {
+            if (cardToReset && cardToReset.classList.contains('is-removing')) cardToReset.style.display = 'none';
+        }, REMOVAL_ANIMATION_DURATION + 50);
+    } else {
+        cardToReset.style.transform = '';
+        cardToReset.addEventListener('transitionend', () => {
+            if (cardToReset) cardToReset.style.transition = '';
+        }, { once: true });
+    }
+}
+
+// --- Setup Function ---
+export function setupEventListeners() {
+    console.log("Setting up event listeners...");
+
+    // Filters, Sorting, Menu Actions...
+    searchInput?.addEventListener('input', handleFilterChange);
+    typeInput?.addEventListener('input', handleFilterChange);
+    oracleInput?.addEventListener('input', handleFilterChange);
+    manaCostInput?.addEventListener('input', handleFilterChange);
+    raritySelect?.addEventListener('change', handleFilterChange);
+    sortSelect?.addEventListener('change', handleSortChange);
+    exportFavoritesButton?.addEventListener('click', handleExportFavorites);
+    importFavoritesInput?.addEventListener('change', handleImportFavorites);
+    clearFavoritesButton?.addEventListener('click', handleClearFavorites);
+    clearIgnoredTopButton?.addEventListener('click', handleClearIgnored); // Listener for top button
+    resetFiltersButton?.addEventListener('click', resetFilters);
+
+    // Filter Toggles
+    const filterToggles = document.querySelectorAll('.filter-toggle');
+    filterToggles.forEach(toggle => toggle?.addEventListener('change', handleFilterChange));
+
+    // Menu Toggle Button
+    menuToggleButton?.addEventListener('click', () => {
+        const menuPanel = document.getElementById('menuPanel');
+        const hamburgerIcon = document.getElementById('menuIconHamburger');
+        const closeIcon = document.getElementById('menuIconClose');
+        if (menuPanel?.classList.contains('-translate-x-full')) {
+            openMenu();
+            hamburgerIcon?.classList.replace('opacity-100', 'opacity-0');
+            closeIcon?.classList.replace('opacity-0', 'opacity-100');
+        } else {
+            closeMenu();
+            hamburgerIcon?.classList.replace('opacity-0', 'opacity-100');
+            closeIcon?.classList.replace('opacity-100', 'opacity-0');
         }
     });
-  } else {
-    console.warn("⚠️ Could not find all advanced search toggle elements.");
-  }
 
-  // 2. Filter Inputs (Text, Select, Checkbox) -> Trigger filterCards
-  const filterElements = [
-    searchInput, typeInput, rarityInput, oracleInput, manaInput,
-    foilToggle, etchedToggle, promoToggle, tokenToggle, favoriteToggle
-  ];
-  filterElements.forEach(el => {
-    if (el) {
-      const isTextInput = (el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'search'));
-      const eventType = isTextInput ? 'input' : 'change';
-      const handler = isTextInput ? debouncedFilterCards : filterCards;
-      el.addEventListener(eventType, handler);
+    // Menu Overlay Click
+    menuOverlay?.addEventListener('click', () => {
+        closeMenu();
+        document.getElementById('menuIconHamburger')?.classList.replace('opacity-0', 'opacity-100');
+        document.getElementById('menuIconClose')?.classList.replace('opacity-100', 'opacity-0');
+    });
+
+    // Filter Section Toggle
+    toggleFiltersButton?.addEventListener('click', () => {
+        if (filtersSortingContent) {
+            const isOpen = filtersSortingContent.classList.toggle('is-open');
+            toggleFiltersButton.classList.toggle('is-open', isOpen);
+            // Set max-height based on scrollHeight for smooth animation
+            if (isOpen) {
+                filtersSortingContent.style.maxHeight = filtersSortingContent.scrollHeight + "px";
+            } else {
+                requestAnimationFrame(() => {
+                    filtersSortingContent.style.maxHeight = '0px';
+                });
+            }
+        }
+    });
+    // Initialize filters as collapsed
+    if (filtersSortingContent) {
+        filtersSortingContent.classList.remove('is-open');
+        filtersSortingContent.style.maxHeight = '0px';
     }
-  });
+    if (toggleFiltersButton) {
+        toggleFiltersButton.classList.remove('is-open');
+    }
 
-  // 3. Sort Dropdown -> Trigger applySort and re-render
-  if (sortSelect) {
-      sortSelect.addEventListener('change', () => {
-          console.log("Sort changed:", sortSelect.value);
-          applySort();
-          resetIndex();
-          drawCards(true);
-      });
-  } else {
-      console.warn("⚠️ Sort select dropdown not found.");
-  }
+    // --- Manual Swipe Event Listeners ---
+    if (cardContainer) {
+        // Touch Events
+        cardContainer.addEventListener('touchstart', (e) => {
+            if (e.target.closest('.card') && !e.target.closest('button')) {
+                handleGestureStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
+            }
+        }, { passive: true });
+        cardContainer.addEventListener('touchmove', (e) => {
+            if (isSwiping) {
+                const dX = e.touches[0].clientX - touchstartX;
+                const dY = e.touches[0].clientY - touchstartY;
+                if (Math.abs(dX) > Math.abs(dY)) {
+                    e.preventDefault();
+                }
+                handleGestureMove(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+        cardContainer.addEventListener('touchend', handleGestureEnd);
+        cardContainer.addEventListener('touchcancel', handleGestureEnd);
 
-  // 4. Reset Filters Button
-  if (resetBtn) {
-    resetBtn.addEventListener("click", () => {
-      console.log("Resetting filters...");
-      if (searchInput) searchInput.value = "";
-      if (typeInput) typeInput.value = "";
-      if (oracleInput) oracleInput.value = "";
-      if (manaInput) manaInput.value = "";
-      if (rarityInput) rarityInput.value = "";
-      if (sortSelect) sortSelect.value = "desc";
-      if (foilToggle) foilToggle.checked = false;
-      if (etchedToggle) etchedToggle.checked = false;
-      if (promoToggle) promoToggle.checked = false;
-      if (tokenToggle) tokenToggle.checked = false;
-      if (favoriteToggle) favoriteToggle.checked = false;
+        // Mouse Events
+        cardContainer.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.card') && !e.target.closest('button')) {
+                handleGestureStart(e.clientX, e.clientY, e.target);
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (isSwiping) {
+                handleGestureMove(e.clientX, e.clientY);
+            }
+        });
+        document.addEventListener('mouseup', (e) => {
+            if (isSwiping) {
+                handleGestureEnd(e);
+            }
+        });
+        document.addEventListener('mouseleave', (e) => {
+            if (isSwiping && e.relatedTarget === null) {
+                handleGestureEnd(e);
+            }
+        });
 
-      filterCards();
-    });
-  } else {
-    console.warn("⚠️ Reset button not found.");
-  }
+        console.log("Manual swipe event listeners attached.");
+    } else {
+        console.error("Card container not found, cannot attach swipe listeners.");
+    }
 
-  // 5. Back to Top Button Visibility & Click
-  if (backToTopBtn) {
-    window.addEventListener("scroll", () => {
-      if (window.scrollY > 300) {
-        backToTopBtn.classList.remove("hidden");
-      } else {
-        backToTopBtn.classList.add("hidden");
-      }
-    }, { passive: true });
-
-    backToTopBtn.addEventListener("click", () => {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-  } else {
-    console.warn("⚠️ Back to Top button not found.");
-  }
-
-  // 6. Favorite Button Click Listener (using Event Delegation on card container)
-  if (cardContainer) {
-      cardContainer.addEventListener('click', (event) => {
-          const button = event.target.closest('.favorite-button');
-          if (button) {
-              const cardId = button.dataset.cardId;
-              if (cardId) {
-                  console.log(`Favorite button clicked for card ID: ${cardId}`);
-                  const isNowFavorite = toggleFavorite(cardId);
-                  console.log(`Card ID ${cardId} is now favorite: ${isNowFavorite}`);
-                  button.classList.toggle('favorited', isNowFavorite);
-                  if (favoriteToggle?.checked && !isNowFavorite) {
-                      console.log("Re-filtering because a card was unfavorited while 'Favorites Only' is active.");
-                      filterCards();
-                  }
-              } else {
-                  console.warn("⚠️ Favorite button clicked, but no card ID found in data attribute.");
-              }
+    document.addEventListener('DOMContentLoaded', () => {
+        const backToTopBtn = document.getElementById('backToTopBtn');
+        if (!backToTopBtn) return;
+      
+        // Show/hide the button based on scroll position
+        window.addEventListener('scroll', () => {
+          if (window.scrollY > 400) {
+            backToTopBtn.classList.remove('hidden');
+          } else {
+            backToTopBtn.classList.add('hidden');
           }
+        });
+      
+        // Click the button to smoothly scroll back to top
+        backToTopBtn.addEventListener('click', () => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
       });
-      console.log("⭐ Favorite button listener attached to card container.");
-  } else {
-      console.warn("⚠️ Card container not found, cannot attach favorite listener.");
-  }
+      
 
-  // 7. Export Favorites Button
-  if (exportBtn) {
-      exportBtn.addEventListener('click', exportFavoritesCSV);
-      console.log("⬇️ Export button listener attached.");
-  } else {
-      console.warn("⚠️ Export button (#exportBtn) not found.");
-  }
-
-  // 8. Import Favorites Button & File Input Handling
-  if (importBtn && importFileInput) {
-      importBtn.addEventListener('click', () => {
-          importFileInput.click();
-      });
-
-      importFileInput.addEventListener('change', (event) => {
-          const file = event.target.files[0];
-          if (file) {
-              console.log(`Importing file: ${file.name}`);
-              importFavoritesCSV(file);
-              setTimeout(() => {
-                 console.log("Refreshing UI after import...");
-                 document.querySelectorAll('.card-base[data-card-id]').forEach(cardDiv => {
-                    const cardId = cardDiv.dataset.cardId;
-                    const favButton = cardDiv.querySelector('.favorite-button');
-                    if (favButton) {
-                        const shouldBeFavorited = isFavorite(cardId);
-                        favButton.classList.toggle('favorited', shouldBeFavorited);
-                    }
-                 });
-                 if (favoriteToggle?.checked) {
-                     console.log("Re-filtering after import because 'Favorites Only' is active.");
-                     filterCards();
-                 }
-                 console.log("UI refresh complete.");
-              }, 200);
-              event.target.value = null;
-          }
-      });
-      console.log("⬆️ Import button and file input listeners attached.");
-  } else {
-      console.warn("⚠️ Import button (#importBtn) or file input (#importFile) not found.");
-  }
-
-  // 9. Clear All Favorites Button
-  if (clearFavoritesBtn) {
-      clearFavoritesBtn.addEventListener("click", () => {
-          if (confirm("Are you sure you want to clear all favorites?")) {
-              clearFavorites();
-              document.querySelectorAll('.card-base[data-card-id]').forEach(cardDiv => {
-                  const favButton = cardDiv.querySelector('.favorite-button');
-                  if (favButton) {
-                      favButton.classList.remove("favorited");
-                  }
-              });
-              if (favoriteToggle && favoriteToggle.checked) {
-                  filterCards();
-              }
-          }
-      });
-      console.log("✅ Clear All Favorites button listener attached.");
-  } else {
-      console.warn("⚠️ Clear All Favorites button not found.");
-  }
-
-  console.log("✅ All event listeners set up.");
+    console.log("Event listeners set up complete.");
 }
