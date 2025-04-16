@@ -224,9 +224,17 @@ function handleGestureMove(clientX, clientY) {
     touchendX = clientX;
     touchendY = clientY;
     const deltaX = touchendX - touchstartX;
+    const deltaY = touchendY - touchstartY;
+    
+    // Only update transform if the horizontal movement exceeds 10px
+    // and horizontal movement is dominant over vertical movement.
+    if (Math.abs(deltaX) < 10 || Math.abs(deltaX) < Math.abs(deltaY) * 1.5) {
+      return;
+    }
+    
     currentX = deltaX;
     currentCardElement.style.transform = `translateX(${currentX}px) rotate(${deltaX / 25}deg)`;
-}
+  }
 
 function handleGestureEnd(event) {
     if (touchendX === 0) {
@@ -234,6 +242,16 @@ function handleGestureEnd(event) {
         touchendY = touchstartY;
     }
     
+    if (Math.abs(currentX) < 20) { // 10px is an example threshold
+        // Reset position and clear swipe state without acting
+        currentCardElement.style.transition = 'transform 0.3s ease-out';
+        currentCardElement.style.transform = '';
+        // Reset state variables
+        isSwiping = false;
+        currentCardElement = null;
+        touchstartX = touchstartY = touchendX = touchendY = currentX = 0;
+        return;
+    }
     if (!isSwiping || !currentCardElement) return;
     const deltaX = touchendX - touchstartX;
     const deltaY = touchendY - touchstartY;
