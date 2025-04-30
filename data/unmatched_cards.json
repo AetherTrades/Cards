@@ -1,0 +1,22 @@
+[
+  {
+    "reason": "No Scryfall match found for key: rvr:363:ja",
+    "csvData": {
+      "Name": "Deathrite Shaman",
+      "Set code": "RVR",
+      "Set name": "Ravnica Remastered",
+      "Collector number": 363,
+      "Foil": "normal",
+      "Rarity": "rare",
+      "Quantity": 1,
+      "ManaBox ID": 89936,
+      "Scryfall ID": "dd4341f7-c455-463e-9064-f0c215152ba9",
+      "Purchase price": 18.89,
+      "Misprint": false,
+      "Altered": false,
+      "Condition": "near_mint",
+      "Language": "ja",
+      "Purchase price currency": "USD"
+    }
+  }
+]

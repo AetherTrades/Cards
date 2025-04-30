@@ -152,7 +152,8 @@ async function loadCSV(filePath) {
         const requiredKeys = ["Name", "Set code", "Collector number", "Quantity"];
         const validData = result.data.filter(row => {
             const hasRequired = requiredKeys.every(key => row?.[key] != null && String(row?.[key]).trim() !== '');
-            const hasValidQuantity = typeof row?.Quantity === 'number' && row.Quantity > 0;
+            const hasValidQuantity = typeof row.Quantity === 'number' /* && row.Quantity >= 0 */;
+
             if (!hasRequired) {
                 if (VERBOSE_LOGGING) console.log(`Skipping row: Missing required key(s) - ${JSON.stringify(row)}`);
                 return false;
@@ -273,12 +274,12 @@ async function buildCardData() {
                 continue;
             }
             const cleanCollectorNumber = String(card.collector_number).toLowerCase().replace(/[^0-9a-z★]/g, '');
-            const key = `${card.set}:${cleanCollectorNumber}`.toLowerCase();
+            // include language code in index key
+            const key = `${card.set}:${cleanCollectorNumber}:${card.lang}`.toLowerCase();            
             scryfallIndex.set(key, card);
-
             const rawCollectorNumberStr = String(card.collector_number).toLowerCase();
             if (rawCollectorNumberStr.includes("★") && rawCollectorNumberStr !== cleanCollectorNumber) {
-                const keyWithStar = `${card.set}:${rawCollectorNumberStr}`;
+                const keyWithStar = `${card.set}:${rawCollectorNumberStr}:${card.lang}`;                
                 if (!scryfallIndex.has(keyWithStar)) {
                     scryfallIndex.set(keyWithStar, card);
                 }
@@ -299,6 +300,8 @@ async function buildCardData() {
             const name = csvCard["Name"];
             const setCode = csvCard["Set code"];
             const collectorNumberRaw = csvCard["Collector number"];
+            // use the CSV’s Language column (default to English)
+            const desiredLang = (csvCard["Language"] || 'en').toLowerCase();
             const quantity = csvCard["Quantity"];
 
             if (!name || !setCode || !collectorNumberRaw) {
@@ -307,12 +310,14 @@ async function buildCardData() {
             }
 
             const collectorNumberClean = String(collectorNumberRaw).toLowerCase().replace(/[^0-9a-z★]/g, '');
-            const key = `${setCode}:${collectorNumberClean}`.toLowerCase();
-            let match = scryfallIndex.get(key);
+            // include desiredLang in the lookup
+            const key = `${setCode}:${collectorNumberClean}:${desiredLang}`.toLowerCase();
+                
+                let match = scryfallIndex.get(key);
 
             const rawCollectorNumberStr = String(collectorNumberRaw).toLowerCase();
             if (!match && rawCollectorNumberStr.includes("★")) {
-                const rawKey = `${setCode}:${rawCollectorNumberStr}`;
+                const rawKey = `${setCode}:${rawCollectorNumberStr}:${desiredLang}`;
                 match = scryfallIndex.get(rawKey);
             }
 

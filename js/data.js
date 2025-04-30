@@ -2,8 +2,8 @@
  * Manages application state including card data, filters, sorting,
  * user preferences (favorites, ignored, quantities), and localStorage interaction.
  */
-import { applySort } from './sorting.js';
 import { displayError, displayInfo } from './utils.js'; // Import utility for error/info display
+import { applySort } from './filters.js';
 
 // --- State Variables ---
 let allCards = []; // Holds the raw data for all cards from cards.json
@@ -179,9 +179,13 @@ export function hasMoreCards() {
     return currentIndex < filteredCards.length;
 }
 
-/** Gets the total count of filtered cards. */
+/** Gets the total count of filtered cards, summing each card’s quantity. */
 export function getFilteredCount() {
-    return filteredCards.length;
+    return filteredCards.reduce((total, card) => {
+    // Use currentQuantity (from localStorage override) or fallback to card.quantity
+    const qty = card.currentQuantity ?? card.quantity ?? 0;
+    return total + qty;
+    }, 0);
 }
 
 // --- Favorites Management ---
@@ -369,12 +373,20 @@ export function clearIgnored() {
         return;
     }
      if (confirm(`Are you sure you want to clear all ${ignored.size} ignored cards? This cannot be undone.`)) {
-        ignored.forEach(cardId => {
-            const card = allCards.find(c => c.id === cardId);
-            if (card) card.isIgnored = false;
-        });
-        ignored.clear();
-        saveToLocalStorage(LS_KEYS.IGNORED, []);
+ // only un-ignore cards that are NOT favorited; keep favorites hidden
+    const stillIgnored = [];
+    ignored.forEach(cardId => {
+    const card = allCards.find(c => c.id === cardId);
+    if (card) {
+        if (!favorites.has(cardId)) {
+        card.isIgnored = false;
+        } else {
+            stillIgnored.push(cardId);
+        }
+    }
+ });
+        ignored = new Set(stillIgnored);
+        saveToLocalStorage(LS_KEYS.IGNORED, Array.from(ignored));
         console.log("Ignored list cleared.");
         displayInfo("Ignored list cleared.");
         // Requires UI update if filter needs re-applying

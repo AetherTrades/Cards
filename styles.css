@@ -133,3 +133,23 @@
 .hide-scrollbar::-webkit-scrollbar { display: none; }
 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* swipe out to the right */
+.swipe-right {
+  transform: translateX(120%) rotate(20deg);
+  transition: transform 0.3s ease-out;
+  opacity: 0.7;
+}
+
+/* swipe out to the left */
+.swipe-left {
+  transform: translateX(-120%) rotate(-20deg);
+  transition: transform 0.3s ease-out;
+  opacity: 0.7;
+}
+
+/* reset (snap back) */
+.swipe-reset {
+  transform: none !important;
+  transition: transform 0.2s ease-out;
+}
