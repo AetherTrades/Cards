@@ -261,7 +261,7 @@ function handleGestureEnd(e) {
         }
     const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
     const dx = endX - touchStartX;
-  const THRESHOLD = 30;
+  const THRESHOLD = 20;
 
   if (dx > THRESHOLD) {
     // right swipe → favorite

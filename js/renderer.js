@@ -163,11 +163,12 @@ import {
     el.innerHTML = `
       <div class="card-image-container">
         <img
-          src="${card.imageUrl || PLACEHOLDER_IMAGE}"
-          alt="${card.name}"
-          class="card-image w-full aspect-[63/88] bg-gray-700"
-          loading="lazy"
-          onerror="this.onerror=null; this.src='${PLACEHOLDER_IMAGE}'; this.classList.add('img-error');"
+            draggable="false"
+            src="${card.imageUrl || PLACEHOLDER_IMAGE}"
+            alt="${card.name}"
+            class="card-image w-full aspect-[63/88] bg-gray-700"
+            loading="lazy"
+            onerror="this.onerror=null; this.src='${PLACEHOLDER_IMAGE}'; this.classList.add('img-error');"
         >
         <div class="card-tags absolute top-2 right-2 flex flex-col gap-1 z-5">${tagsHtml}</div>
       </div>
